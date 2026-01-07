@@ -8,7 +8,7 @@ create table if not exists schema_migrations (
 create table if not exists tenant (
   id uuid primary key default gen_random_uuid(),
   name text not null,
-  status text not null default ACTIVE check (status in (ACTIVE,SUSPENDED)),
+  status text not null,
   created_at timestamptz not null default now()
 );
 
@@ -23,7 +23,7 @@ create table if not exists app_user (
 create table if not exists membership (
   tenant_id uuid not null references tenant(id) on delete cascade,
   user_id uuid not null references app_user(id) on delete cascade,
-  role text not null check (role in (ADMIN,MANAGER,TECH,ACCOUNTING)),
+  role text not null,
   created_at timestamptz not null default now(),
   primary key (tenant_id, user_id)
 );
@@ -43,7 +43,7 @@ create table if not exists site (
   address_line1 text,
   postal_code text,
   city text,
-  country text default FR,
+  country text not null,
   notes text,
   created_at timestamptz not null default now()
 );
@@ -54,7 +54,7 @@ create table if not exists project (
   client_id uuid references client(id) on delete set null,
   site_id uuid references site(id) on delete set null,
   name text not null,
-  status text not null default DRAFT check (status in (DRAFT,IN_PROGRESS,DONE,ARCHIVED)),
+  status text not null,
   created_at timestamptz not null default now()
 );
 
@@ -91,6 +91,11 @@ alter table client force row level security;
 alter table site force row level security;
 alter table project force row level security;
 alter table audit_log force row level security;
+
+drop policy if exists tenant_isolation_client on client;
+drop policy if exists tenant_isolation_site on site;
+drop policy if exists tenant_isolation_project on project;
+drop policy if exists tenant_isolation_audit on audit_log;
 
 create policy tenant_isolation_client on client
   using (tenant_id = app_current_tenant_id())

@@ -141,7 +141,7 @@ app.post("/auth/signup", async (req, reply) => {
     }
 
     const t = await db.query(
-      "insert into tenant(name) values ($1) returning id, name, status, created_at",
+      "insert into tenant(name, status) values ($1, 'ACTIVE') returning id, name, status, created_at",
       [tenantName]
     );
 
