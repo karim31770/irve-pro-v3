@@ -275,6 +275,7 @@ app.post("/sites", async (req, reply) => {
        )
        returning id, client_id, name, address_line1, postal_code, city, country, created_at`,
       [
+        req.tenant.id,
         clientId ?? null,
         name,
         body.addressLine1 ?? null,
@@ -329,7 +330,7 @@ app.post("/projects", async (req, reply) => {
       `insert into project(tenant_id, client_id, site_id, name, status)
        values (nullif(current_setting(app.tenant_id, true), )::uuid, $1, $2, $3, DRAFT)
        returning id, client_id, site_id, name, status, created_at`,
-      [clientId ?? null, siteId ?? null, name]
+      [req.tenant.id, clientId ?? null, siteId ?? null, name]
     );
     return r.rows[0];
   });
