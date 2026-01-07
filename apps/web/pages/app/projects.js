@@ -36,7 +36,11 @@ export default function Projects() {
           <div className="flex flex-col md:flex-row md:items-end gap-3">
             <label className="form-control w-full max-w-md">
               <div className="label"><span className="label-text">Nouveau projet</span></div>
-              <input className="input input-bordered" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Parking - 8 points 22kW" />
+              <input className="input input-bordered"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex: Parking - 8 points 22kW"
+              />
             </label>
             <button className="btn btn-primary" disabled={name.length < 2} onClick={create}>Créer</button>
             <button className="btn btn-ghost" onClick={() => reload().catch(e => toast.error(e.message))}>Rafraîchir</button>
@@ -46,16 +50,23 @@ export default function Projects() {
 
           <div className="overflow-x-auto">
             <table className="table table-zebra">
-              <thead><tr><th>Nom</th><th>Statut</th><th>Créé le</th></tr></thead>
+              <thead>
+                <tr><th>Nom</th><th>Statut</th><th>Créé le</th><th></th></tr>
+              </thead>
               <tbody>
                 {items.map(p => (
                   <tr key={p.id}>
                     <td className="font-medium">{p.name}</td>
                     <td><span className="badge badge-outline">{p.status}</span></td>
                     <td className="text-sm opacity-70">{new Date(p.created_at).toLocaleString()}</td>
+                    <td>
+                      <a className="btn btn-sm" href={`/app/projects/${p.id}`}>Ouvrir</a>
+                    </td>
                   </tr>
                 ))}
-                {items.length === 0 ? <tr><td colSpan={3} className="opacity-60">Aucun projet</td></tr> : null}
+                {items.length === 0 ? (
+                  <tr><td colSpan={4} className="opacity-60">Aucun projet</td></tr>
+                ) : null}
               </tbody>
             </table>
           </div>
