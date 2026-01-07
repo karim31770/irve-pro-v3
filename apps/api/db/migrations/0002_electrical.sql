@@ -21,11 +21,11 @@ create table if not exists evse (
   project_id uuid not null references project(id) on delete cascade,
 
   name text not null,
-  evse_type text not null,        -- AC/DC
-  phase text not null,            -- MONO/TRI
+  evse_type text not null,      -- AC/DC
+  phase text not null,          -- MONO/TRI
   max_power_kw numeric(10,3) not null,
   max_current_a numeric(10,3),
-  has_6mA_dc_detection boolean not null default false,
+  has_6ma_dc_detection boolean not null default false,
 
   manufacturer text,
   model text,
