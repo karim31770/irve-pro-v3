@@ -25,7 +25,7 @@ export async function withTx(fn) {
 }
 
 export async function setTenant(client, tenantId) {
-  // SET LOCAL ne vaut que pour la transaction en cours
+  // Important: ne PAS écrire set_config(app.tenant_id, ...) (Postgres croirait à table.colonne)
   await client.query("select set_config($1, $2, true)", ["app.tenant_id", tenantId]);
 }
 
