@@ -26,7 +26,7 @@ export async function withTx(fn) {
 
 export async function setTenant(client, tenantId) {
   // SET LOCAL ne vaut que pour la transaction en cours
-  await client.query("select set_config(app.tenant_id, $1, true)", [tenantId]);
+  await client.query("select set_config($1, $2, true)", ["app.tenant_id", tenantId]);
 }
 
 export function isUuid(v) {
