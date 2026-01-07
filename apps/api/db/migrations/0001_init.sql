@@ -5,6 +5,7 @@ create table if not exists schema_migrations (
   applied_at timestamptz not null default now()
 );
 
+-- Tenants
 create table if not exists tenant (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -12,6 +13,7 @@ create table if not exists tenant (
   created_at timestamptz not null default now()
 );
 
+-- Users (global)
 create table if not exists app_user (
   id uuid primary key default gen_random_uuid(),
   email text not null unique,
@@ -20,6 +22,7 @@ create table if not exists app_user (
   created_at timestamptz not null default now()
 );
 
+-- Membership (user <-> tenant)
 create table if not exists membership (
   tenant_id uuid not null references tenant(id) on delete cascade,
   user_id uuid not null references app_user(id) on delete cascade,
@@ -28,6 +31,7 @@ create table if not exists membership (
   primary key (tenant_id, user_id)
 );
 
+-- Entities (tenantées)
 create table if not exists client (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null,
@@ -74,6 +78,16 @@ create index if not exists idx_client_tenant on client(tenant_id);
 create index if not exists idx_site_tenant on site(tenant_id);
 create index if not exists idx_project_tenant on project(tenant_id);
 
+-- Helper RLS: tenant_id depuis setting
+create or replace function app_current_tenant_id()
+returns uuid
+language sql
+stable
+as $$
+  select nullif(current_setting(app.tenant_id, true), )::uuid
+$$;
+
+-- RLS
 alter table client enable row level security;
 alter table site enable row level security;
 alter table project enable row level security;
@@ -85,17 +99,17 @@ alter table project force row level security;
 alter table audit_log force row level security;
 
 create policy tenant_isolation_client on client
-  using (tenant_id = nullif(current_setting(app.tenant_id, true), )::uuid)
-  with check (tenant_id = nullif(current_setting(app.tenant_id, true), )::uuid);
+  using (tenant_id = app_current_tenant_id())
+  with check (tenant_id = app_current_tenant_id());
 
 create policy tenant_isolation_site on site
-  using (tenant_id = nullif(current_setting(app.tenant_id, true), )::uuid)
-  with check (tenant_id = nullif(current_setting(app.tenant_id, true), )::uuid);
+  using (tenant_id = app_current_tenant_id())
+  with check (tenant_id = app_current_tenant_id());
 
 create policy tenant_isolation_project on project
-  using (tenant_id = nullif(current_setting(app.tenant_id, true), )::uuid)
-  with check (tenant_id = nullif(current_setting(app.tenant_id, true), )::uuid);
+  using (tenant_id = app_current_tenant_id())
+  with check (tenant_id = app_current_tenant_id());
 
 create policy tenant_isolation_audit on audit_log
-  using (tenant_id = nullif(current_setting(app.tenant_id, true), )::uuid)
-  with check (tenant_id = nullif(current_setting(app.tenant_id, true), )::uuid);
+  using (tenant_id = app_current_tenant_id())
+  with check (tenant_id = app_current_tenant_id());
