@@ -53,6 +53,15 @@ function requireRole(req, roles) {
   if (!r || !roles.includes(r)) throw httpError(403, "Forbidden (insufficient role)");
 }
 
+async function requireProject(db, tenantId, projectId) {
+  const r = await db.query(
+    "select id, name, status, client_id, site_id, created_at from project where id = $1 and tenant_id = $2",
+    [projectId, tenantId]
+  );
+  if (r.rowCount === 0) throw httpError(404, "Project not found");
+  return r.rows[0];
+}
+
 // -----------------------------
 // AUTH
 // -----------------------------
@@ -70,7 +79,7 @@ app.post("/auth/signup", async (req, reply) => {
 
   const result = await withTx(async (db) => {
     const existing = await db.query("select id from app_user where email = $1", [email.toLowerCase()]);
-    if (existing.rowCount > 0) return { ok: false, reason: "EMAIL_EXISTS" };
+    if (existing.rowCount > 0) return { ok: false };
 
     const t = await db.query(
       "insert into tenant(name, status) values ($1, $2) returning id, name, status, created_at",
@@ -135,14 +144,6 @@ app.post("/auth/login", async (req, reply) => {
   return reply.send({ token, user: result.user, tenants: result.tenants });
 });
 
-app.get("/me", async (req, reply) => {
-  const out = await withTenantContext(req, async (db) => {
-    const u = await db.query("select id, email, created_at from app_user where id = $1", [req.user.id]);
-    return { user: u.rows[0], tenant: { id: req.tenant.id }, role: req.membership.role };
-  });
-  return reply.send(out);
-});
-
 // -----------------------------
 // CLIENTS
 // -----------------------------
@@ -154,7 +155,6 @@ app.post("/clients", async (req, reply) => {
 
   const out = await withTenantContext(req, async (db) => {
     requireRole(req, ["ADMIN", "MANAGER"]);
-
     const r = await db.query(
       "insert into client(tenant_id, name) values ($1, $2) returning id, name, created_at",
       [req.tenant.id, name]
@@ -177,7 +177,7 @@ app.get("/clients", async (req, reply) => {
 });
 
 // -----------------------------
-// SITES
+// SITES (simple)
 // -----------------------------
 app.post("/sites", async (req, reply) => {
   const body = req.body ?? {};
@@ -194,7 +194,7 @@ app.post("/sites", async (req, reply) => {
       `insert into site(
          tenant_id, client_id, name, address_line1, postal_code, city, country, notes
        ) values (
-         $1, $2, $3, $4, $5, $6, coalesce($7,'FR'), $8
+         $1, $2, $3, $4, $5, $6, coalesce($7,FR), $8
        )
        returning id, client_id, name, address_line1, postal_code, city, country, created_at`,
       [
@@ -235,21 +235,16 @@ app.get("/sites", async (req, reply) => {
 app.post("/projects", async (req, reply) => {
   const body = req.body ?? {};
   const name = body.name;
-  const clientId = body.clientId;
-  const siteId = body.siteId;
 
   if (typeof name !== "string" || name.length < 2) return reply.code(400).send({ error: "name invalid" });
-  if (clientId != null && (typeof clientId !== "string" || !isUuid(clientId))) return reply.code(400).send({ error: "clientId invalid" });
-  if (siteId != null && (typeof siteId !== "string" || !isUuid(siteId))) return reply.code(400).send({ error: "siteId invalid" });
 
   const out = await withTenantContext(req, async (db) => {
     requireRole(req, ["ADMIN", "MANAGER"]);
-
     const r = await db.query(
-      `insert into project(tenant_id, client_id, site_id, name, status)
-       values ($1, $2, $3, $4, $5)
-       returning id, client_id, site_id, name, status, created_at`,
-      [req.tenant.id, clientId ?? null, siteId ?? null, name, "DRAFT"]
+      `insert into project(tenant_id, name, status)
+       values ($1, $2, $3)
+       returning id, name, status, created_at`,
+      [req.tenant.id, name, "DRAFT"]
     );
     return r.rows[0];
   });
@@ -260,7 +255,7 @@ app.post("/projects", async (req, reply) => {
 app.get("/projects", async (req, reply) => {
   const out = await withTenantContext(req, async (db) => {
     const r = await db.query(
-      `select id, client_id, site_id, name, status, created_at
+      `select id, name, status, created_at
        from project
        where tenant_id = $1
        order by created_at desc
@@ -269,6 +264,226 @@ app.get("/projects", async (req, reply) => {
     );
     return r.rows;
   });
+  return reply.send(out);
+});
+
+app.get("/projects/:projectId", async (req, reply) => {
+  const projectId = req.params?.projectId;
+  if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
+
+  const out = await withTenantContext(req, async (db) => {
+    const p = await requireProject(db, req.tenant.id, projectId);
+    return p;
+  });
+  return reply.send(out);
+});
+
+// -----------------------------
+// Conception électrique (MVP)
+// -----------------------------
+app.get("/projects/:projectId/electrical-context", async (req, reply) => {
+  const projectId = req.params?.projectId;
+  if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
+
+  const out = await withTenantContext(req, async (db) => {
+    await requireProject(db, req.tenant.id, projectId);
+    const r = await db.query(
+      `select id, earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent
+       from electrical_context
+       where tenant_id = $1 and project_id = $2`,
+      [req.tenant.id, projectId]
+    );
+    return r.rows[0] ?? null;
+  });
+
+  return reply.send(out);
+});
+
+app.put("/projects/:projectId/electrical-context", async (req, reply) => {
+  const projectId = req.params?.projectId;
+  if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
+
+  const body = req.body ?? {};
+
+  const out = await withTenantContext(req, async (db) => {
+    requireRole(req, ["ADMIN", "MANAGER"]);
+    await requireProject(db, req.tenant.id, projectId);
+
+    const r = await db.query(
+      `insert into electrical_context(
+         tenant_id, project_id,
+         earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a,
+         ambient_temp_c, voltage_drop_limit_percent
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8)
+       on conflict (project_id) do update set
+         earthing_system = excluded.earthing_system,
+         supply_phase = excluded.supply_phase,
+         nominal_voltage_v = excluded.nominal_voltage_v,
+         prospective_sc_ik_a = excluded.prospective_sc_ik_a,
+         ambient_temp_c = excluded.ambient_temp_c,
+         voltage_drop_limit_percent = excluded.voltage_drop_limit_percent
+       returning id, earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent`,
+      [
+        req.tenant.id, projectId,
+        body.earthingSystem ?? null,
+        body.supplyPhase ?? null,
+        body.nominalVoltageV ?? null,
+        body.prospectiveScIkA ?? null,
+        body.ambientTempC ?? null,
+        body.voltageDropLimitPercent ?? null
+      ]
+    );
+    return r.rows[0];
+  });
+
+  return reply.send(out);
+});
+
+// EVSE
+app.get("/projects/:projectId/evse", async (req, reply) => {
+  const projectId = req.params?.projectId;
+  if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
+
+  const out = await withTenantContext(req, async (db) => {
+    await requireProject(db, req.tenant.id, projectId);
+    const r = await db.query(
+      `select id, name, evse_type, phase, max_power_kw, max_current_a, has_6mA_dc_detection, manufacturer, model, created_at
+       from evse
+       where tenant_id = $1 and project_id = $2
+       order by created_at desc`,
+      [req.tenant.id, projectId]
+    );
+    return r.rows;
+  });
+
+  return reply.send(out);
+});
+
+app.post("/projects/:projectId/evse", async (req, reply) => {
+  const projectId = req.params?.projectId;
+  if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
+
+  const body = req.body ?? {};
+  if (typeof body.name !== "string" || body.name.length < 2) return reply.code(400).send({ error: "name invalid" });
+
+  const out = await withTenantContext(req, async (db) => {
+    requireRole(req, ["ADMIN", "MANAGER"]);
+    await requireProject(db, req.tenant.id, projectId);
+
+    const r = await db.query(
+      `insert into evse(
+         tenant_id, project_id,
+         name, evse_type, phase, max_power_kw, max_current_a, has_6mA_dc_detection,
+         manufacturer, model
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       returning id, name, evse_type, phase, max_power_kw, max_current_a, has_6mA_dc_detection, manufacturer, model, created_at`,
+      [
+        req.tenant.id, projectId,
+        body.name,
+        body.evseType ?? "AC",
+        body.phase ?? "MONO",
+        body.maxPowerKw ?? 7.4,
+        body.maxCurrentA ?? null,
+        !!body.has6mADcDetection,
+        body.manufacturer ?? null,
+        body.model ?? null
+      ]
+    );
+    return r.rows[0];
+  });
+
+  return reply.code(201).send(out);
+});
+
+app.delete("/projects/:projectId/evse/:evseId", async (req, reply) => {
+  const { projectId, evseId } = req.params ?? {};
+  if (!isUuid(projectId) || !isUuid(evseId)) return reply.code(400).send({ error: "invalid ids" });
+
+  const out = await withTenantContext(req, async (db) => {
+    requireRole(req, ["ADMIN", "MANAGER"]);
+    await requireProject(db, req.tenant.id, projectId);
+
+    const r = await db.query(
+      "delete from evse where tenant_id = $1 and project_id = $2 and id = $3 returning id",
+      [req.tenant.id, projectId, evseId]
+    );
+    if (r.rowCount === 0) throw httpError(404, "EVSE not found");
+    return { ok: true };
+  });
+
+  return reply.send(out);
+});
+
+// Feeders
+app.get("/projects/:projectId/feeders", async (req, reply) => {
+  const projectId = req.params?.projectId;
+  if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
+
+  const out = await withTenantContext(req, async (db) => {
+    await requireProject(db, req.tenant.id, projectId);
+    const r = await db.query(
+      `select f.id, f.name, f.evse_id, f.length_m, f.cable_section_mm2, f.notes, f.created_at,
+              e.name as evse_name
+       from feeder f
+       left join evse e on e.id = f.evse_id
+       where f.tenant_id = $1 and f.project_id = $2
+       order by f.created_at desc`,
+      [req.tenant.id, projectId]
+    );
+    return r.rows;
+  });
+
+  return reply.send(out);
+});
+
+app.post("/projects/:projectId/feeders", async (req, reply) => {
+  const projectId = req.params?.projectId;
+  if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
+
+  const body = req.body ?? {};
+  if (typeof body.name !== "string" || body.name.length < 2) return reply.code(400).send({ error: "name invalid" });
+  if (body.evseId != null && (!isUuid(body.evseId))) return reply.code(400).send({ error: "evseId invalid" });
+
+  const out = await withTenantContext(req, async (db) => {
+    requireRole(req, ["ADMIN", "MANAGER"]);
+    await requireProject(db, req.tenant.id, projectId);
+
+    const r = await db.query(
+      `insert into feeder(
+         tenant_id, project_id, name, evse_id, length_m, cable_section_mm2, notes
+       ) values ($1,$2,$3,$4,$5,$6,$7)
+       returning id, name, evse_id, length_m, cable_section_mm2, notes, created_at`,
+      [
+        req.tenant.id, projectId,
+        body.name,
+        body.evseId ?? null,
+        body.lengthM ?? 0,
+        body.cableSectionMm2 ?? null,
+        body.notes ?? null
+      ]
+    );
+    return r.rows[0];
+  });
+
+  return reply.code(201).send(out);
+});
+
+app.delete("/projects/:projectId/feeders/:feederId", async (req, reply) => {
+  const { projectId, feederId } = req.params ?? {};
+  if (!isUuid(projectId) || !isUuid(feederId)) return reply.code(400).send({ error: "invalid ids" });
+
+  const out = await withTenantContext(req, async (db) => {
+    requireRole(req, ["ADMIN", "MANAGER"]);
+    await requireProject(db, req.tenant.id, projectId);
+
+    const r = await db.query(
+      "delete from feeder where tenant_id = $1 and project_id = $2 and id = $3 returning id",
+      [req.tenant.id, projectId, feederId]
+    );
+    if (r.rowCount === 0) throw httpError(404, "Feeder not found");
+    return { ok: true };
+  });
+
   return reply.send(out);
 });
 
