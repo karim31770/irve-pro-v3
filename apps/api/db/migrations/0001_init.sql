@@ -65,7 +65,7 @@ create table if not exists audit_log (
   action text not null,
   entity_type text,
   entity_id uuid,
-  meta jsonb not null default {}::jsonb,
+  meta jsonb not null default jsonb_build_object(),
   created_at timestamptz not null default now()
 );
 
