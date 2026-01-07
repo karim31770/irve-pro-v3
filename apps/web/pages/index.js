@@ -1,8 +1,5 @@
 import { useEffect } from "react";
-
 export default function Home() {
-  useEffect(() => {
-    window.location.href = "/app";
-  }, []);
+  useEffect(() => { window.location.href = "/app"; }, []);
   return null;
 }
