@@ -55,7 +55,7 @@ function requireRole(req, roles) {
 
 async function requireProject(db, tenantId, projectId) {
   const r = await db.query(
-    "select id, name, status, client_id, site_id, created_at from project where id = $1 and tenant_id = $2",
+    "select id, name, status, created_at from project where id = $1 and tenant_id = $2",
     [projectId, tenantId]
   );
   if (r.rowCount === 0) throw httpError(404, "Project not found");
@@ -150,7 +150,6 @@ app.post("/auth/login", async (req, reply) => {
 app.post("/clients", async (req, reply) => {
   const body = req.body ?? {};
   const name = body.name;
-
   if (typeof name !== "string" || name.length < 2) return reply.code(400).send({ error: "name invalid" });
 
   const out = await withTenantContext(req, async (db) => {
@@ -235,7 +234,6 @@ app.get("/sites", async (req, reply) => {
 app.post("/projects", async (req, reply) => {
   const body = req.body ?? {};
   const name = body.name;
-
   if (typeof name !== "string" || name.length < 2) return reply.code(400).send({ error: "name invalid" });
 
   const out = await withTenantContext(req, async (db) => {
@@ -272,8 +270,7 @@ app.get("/projects/:projectId", async (req, reply) => {
   if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
 
   const out = await withTenantContext(req, async (db) => {
-    const p = await requireProject(db, req.tenant.id, projectId);
-    return p;
+    return requireProject(db, req.tenant.id, projectId);
   });
   return reply.send(out);
 });
@@ -347,7 +344,7 @@ app.get("/projects/:projectId/evse", async (req, reply) => {
   const out = await withTenantContext(req, async (db) => {
     await requireProject(db, req.tenant.id, projectId);
     const r = await db.query(
-      `select id, name, evse_type, phase, max_power_kw, max_current_a, has_6mA_dc_detection, manufacturer, model, created_at
+      `select id, name, evse_type, phase, max_power_kw, max_current_a, has_6ma_dc_detection, manufacturer, model, created_at
        from evse
        where tenant_id = $1 and project_id = $2
        order by created_at desc`,
@@ -373,10 +370,10 @@ app.post("/projects/:projectId/evse", async (req, reply) => {
     const r = await db.query(
       `insert into evse(
          tenant_id, project_id,
-         name, evse_type, phase, max_power_kw, max_current_a, has_6mA_dc_detection,
+         name, evse_type, phase, max_power_kw, max_current_a, has_6ma_dc_detection,
          manufacturer, model
        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       returning id, name, evse_type, phase, max_power_kw, max_current_a, has_6mA_dc_detection, manufacturer, model, created_at`,
+       returning id, name, evse_type, phase, max_power_kw, max_current_a, has_6ma_dc_detection, manufacturer, model, created_at`,
       [
         req.tenant.id, projectId,
         body.name,
