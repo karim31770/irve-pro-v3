@@ -36,7 +36,7 @@ async function withTenantContext(req, handler) {
     await setTenant(db, tenantId);
 
     const m = await db.query(
-      "select role from membership where tenant_id = $1 and user_id = $2",
+      "select role from membership where p.tenant_id = $1 and user_id = $2",
       [tenantId, userId]
     );
     if (m.rowCount === 0) throw httpError(403, "Forbidden (no membership for tenant)");
@@ -93,7 +93,7 @@ app.post("/auth/signup", async (req, reply) => {
     );
 
     await db.query(
-      "insert into membership(tenant_id, user_id, role) values ($1, $2, $3)",
+      "insert into membership(tenant_id, user_id, role) values ($1, $2, $3, $4)",
       [t.rows[0].id, u.rows[0].id, "ADMIN"]
     );
 
@@ -168,7 +168,7 @@ app.post("/clients", async (req, reply) => {
 app.get("/clients", async (req, reply) => {
   const out = await withTenantContext(req, async (db) => {
     const r = await db.query(
-      "select id, name, created_at from client where tenant_id = $1 order by created_at desc limit 200",
+      "select id, name, created_at from client where p.tenant_id = $1 order by created_at desc limit 200",
       [req.tenant.id]
     );
     return r.rows;
@@ -219,7 +219,7 @@ app.get("/sites", async (req, reply) => {
     const r = await db.query(
       `select id, client_id, name, address_line1, postal_code, city, country, created_at
        from site
-       where tenant_id = $1
+       where p.tenant_id = $1
        order by created_at desc
        limit 200`,
       [req.tenant.id]
@@ -240,10 +240,10 @@ app.post("/projects", async (req, reply) => {
   const out = await withTenantContext(req, async (db) => {
     requireRole(req, ["ADMIN", "MANAGER"]);
     const r = await db.query(
-      `insert into project(tenant_id, name, status)
-       values ($1, $2, $3)
+      `insert into project(tenant_id, client_id, name, status)
+       values ($1, $2, $3, $4)
        returning id, name, status, created_at`,
-      [req.tenant.id, name, "DRAFT"]
+      [req.tenant.id, clientId, name, "DRAFT"]
     );
     return r.rows[0];
   });
@@ -254,9 +254,10 @@ app.post("/projects", async (req, reply) => {
 app.get("/projects", async (req, reply) => {
   const out = await withTenantContext(req, async (db) => {
     const r = await db.query(
-      `select id, name, status, created_at
-       from project
-       where tenant_id = $1
+      `select p.id, p.client_id, p.name, p.status, p.created_at, c.name as client_name
+       from project p
+       left join client c on c.id = p.client_id
+       where p.tenant_id = $1
        order by created_at desc
        limit 200`,
       [req.tenant.id]
@@ -286,9 +287,9 @@ app.get("/projects/:projectId/electrical-context", async (req, reply) => {
   const out = await withTenantContext(req, async (db) => {
     await requireProject(db, req.tenant.id, projectId);
     const r = await db.query(
-      `select id, earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent
+      `select id, earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent, available_power_kw
        from electrical_context
-       where tenant_id = $1 and project_id = $2`,
+       where p.tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
     return r.rows[0] ?? null;
@@ -311,16 +312,17 @@ app.put("/projects/:projectId/electrical-context", async (req, reply) => {
       `insert into electrical_context(
          tenant_id, project_id,
          earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a,
-         ambient_temp_c, voltage_drop_limit_percent
-       ) values ($1,$2,$3,$4,$5,$6,$7,$8)
+         ambient_temp_c, voltage_drop_limit_percent, available_power_kw
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        on conflict (project_id) do update set
          earthing_system = excluded.earthing_system,
          supply_phase = excluded.supply_phase,
          nominal_voltage_v = excluded.nominal_voltage_v,
          prospective_sc_ik_a = excluded.prospective_sc_ik_a,
          ambient_temp_c = excluded.ambient_temp_c,
-         voltage_drop_limit_percent = excluded.voltage_drop_limit_percent
-       returning id, earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent`,
+         voltage_drop_limit_percent = excluded.voltage_drop_limit_percent,
+         available_power_kw = excluded.available_power_kw
+       returning id, earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent, available_power_kw`,
       [
         req.tenant.id, projectId,
         body.earthingSystem ?? null,
@@ -328,7 +330,8 @@ app.put("/projects/:projectId/electrical-context", async (req, reply) => {
         body.nominalVoltageV ?? null,
         body.prospectiveScIkA ?? null,
         body.ambientTempC ?? null,
-        body.voltageDropLimitPercent ?? null
+        body.voltageDropLimitPercent ?? null,
+        body.availablePowerKw ?? null
       ]
     );
     return r.rows[0];
@@ -347,7 +350,7 @@ app.get("/projects/:projectId/evse", async (req, reply) => {
     const r = await db.query(
       `select id, name, evse_type, phase, max_power_kw, max_current_a, has_6ma_dc_detection, manufacturer, model, created_at
        from evse
-       where tenant_id = $1 and project_id = $2
+       where p.tenant_id = $1 and project_id = $2
        order by created_at desc`,
       [req.tenant.id, projectId]
     );
@@ -379,8 +382,20 @@ app.post("/projects/:projectId/evse", async (req, reply) => {
         req.tenant.id, projectId,
         body.name,
         body.evseType ?? "AC",
-        body.phase ?? "MONO",
-        body.maxPowerKw ?? 7.4,
+        (() => {
+        const p = Number(body.maxPowerKw ?? 7.4);
+        if (body.evseType === 'AC' && p > 7.4) return 'TRI';
+        return body.phase ?? 'MONO';
+      })(),
+        (() => {
+        const p = Number(body.maxPowerKw ?? 7.4);
+        if (body.evseType === 'AC' && p > 44) {
+          const err = new Error('EVSE AC: puissance max 44 kW');
+          err.statusCode = 400;
+          throw err;
+        }
+        return p;
+      })(),
         body.maxCurrentA ?? null,
         !!body.has6mADcDetection,
         body.manufacturer ?? null,
@@ -402,7 +417,7 @@ app.delete("/projects/:projectId/evse/:evseId", async (req, reply) => {
     await requireProject(db, req.tenant.id, projectId);
 
     const r = await db.query(
-      "delete from evse where tenant_id = $1 and project_id = $2 and id = $3 returning id",
+      "delete from evse where p.tenant_id = $1 and project_id = $2 and id = $3 returning id",
       [req.tenant.id, projectId, evseId]
     );
     if (r.rowCount === 0) throw httpError(404, "EVSE not found");
@@ -475,7 +490,7 @@ app.delete("/projects/:projectId/feeders/:feederId", async (req, reply) => {
     await requireProject(db, req.tenant.id, projectId);
 
     const r = await db.query(
-      "delete from feeder where tenant_id = $1 and project_id = $2 and id = $3 returning id",
+      "delete from feeder where p.tenant_id = $1 and project_id = $2 and id = $3 returning id",
       [req.tenant.id, projectId, feederId]
     );
     if (r.rowCount === 0) throw httpError(404, "Feeder not found");
@@ -498,23 +513,23 @@ app.post("/projects/:projectId/calculations/run", async (req, reply) => {
     await requireProject(db, req.tenant.id, projectId);
 
     const ctx = await db.query(
-      `select earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent
+      `select earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent, available_power_kw
        from electrical_context
-       where tenant_id = $1 and project_id = $2`,
+       where p.tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
 
     const evse = await db.query(
       `select id, name, evse_type, phase, max_power_kw, max_current_a, has_6ma_dc_detection
        from evse
-       where tenant_id = $1 and project_id = $2`,
+       where p.tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
 
     const feeders = await db.query(
       `select id, name, evse_id, length_m, cable_section_mm2
        from feeder
-       where tenant_id = $1 and project_id = $2`,
+       where p.tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
 
@@ -566,7 +581,7 @@ app.post("/projects/:projectId/calculations/run", async (req, reply) => {
     for (const n of calc.nonConformities) {
       await db.query(
         `insert into non_conformity(tenant_id, run_id, severity, code, standard_ref, clause_ref, message, meta)
-         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
           req.tenant.id,
           run.rows[0].id,
@@ -596,7 +611,7 @@ app.get("/projects/:projectId/calculations/latest", async (req, reply) => {
     const r = await db.query(
       `select id, ruleset_name, ruleset_version, outputs_json, created_at
        from calculation_run
-       where tenant_id = $1 and project_id = $2
+       where p.tenant_id = $1 and project_id = $2
        order by created_at desc
        limit 1`,
       [req.tenant.id, projectId]
