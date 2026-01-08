@@ -9,35 +9,34 @@ import { Plus, Search, Filter } from "lucide-react";
 
 export default function Projects() {
   const [items, setItems] = useState([]);
+  const [clients, setClients] = useState([]);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("ALL");
   const [loading, setLoading] = useState(true);
 
   const [newName, setNewName] = useState("");
+  const [newClientId, setNewClientId] = useState("");
 
   async function reload() {
-    const data = await apiFetch("/projects");
-    setItems(data);
+    const [p, c] = await Promise.all([apiFetch("/projects"), apiFetch("/clients")]);
+    setItems(p);
+    setClients(c);
+    if (!newClientId && c.length) setNewClientId(c[0].id);
   }
 
   useEffect(() => {
     if (!storage.getToken()) { window.location.href = "/login"; return; }
     (async () => {
-      try {
-        setLoading(true);
-        await reload();
-      } catch (e) {
-        toast.error(e.message);
-      } finally {
-        setLoading(false);
-      }
+      try { setLoading(true); await reload(); }
+      catch (e) { toast.error(e.message); }
+      finally { setLoading(false); }
     })();
   }, []);
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
     return items.filter(p => {
-      const okQ = !qq || (p.name || "").toLowerCase().includes(qq);
+      const okQ = !qq || (p.name || "").toLowerCase().includes(qq) || (p.client_name || "").toLowerCase().includes(qq);
       const okS = status === "ALL" || p.status === status;
       return okQ && okS;
     });
@@ -45,11 +44,11 @@ export default function Projects() {
 
   async function createProject() {
     try {
-      await apiFetch("/projects", { method: "POST", body: { name: newName } });
+      if (!newClientId) { toast.error("Choisis un client"); return; }
+      await apiFetch("/projects", { method: "POST", body: { name: newName, clientId: newClientId } });
       setNewName("");
       toast.success("Projet créé");
       await reload();
-      // ferme modal
       document.getElementById("new_project_modal")?.close?.();
     } catch (e) {
       toast.error(e.message);
@@ -61,7 +60,7 @@ export default function Projects() {
       <div className="flex flex-col lg:flex-row lg:items-end gap-3 mb-5">
         <div className="flex-1">
           <div className="text-2xl font-semibold">Projets</div>
-          <div className="opacity-70">Recherche, ouvre une fiche et passe en conception électrique.</div>
+          <div className="opacity-70">Chaque projet doit être rattaché à un client.</div>
         </div>
 
         <div className="flex gap-2">
@@ -74,13 +73,12 @@ export default function Projects() {
         </div>
       </div>
 
-      {/* Toolbar */}
       <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft mb-4">
         <div className="card-body">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <label className="input input-bordered flex items-center gap-2">
               <Search className="w-4 h-4 opacity-70" />
-              <input className="grow" placeholder="Rechercher un projet…" value={q} onChange={(e) => setQ(e.target.value)} />
+              <input className="grow" placeholder="Rechercher projet / client…" value={q} onChange={(e) => setQ(e.target.value)} />
             </label>
 
             <label className="input input-bordered flex items-center gap-2">
@@ -94,20 +92,17 @@ export default function Projects() {
               </select>
             </label>
 
-            <div className="flex items-center justify-between md:justify-end gap-3">
-              <div className="text-sm opacity-70">
-                {loading ? "Chargement…" : `${filtered.length} / ${items.length}`}
-              </div>
+            <div className="flex items-center justify-end text-sm opacity-70">
+              {loading ? "Chargement…" : `${filtered.length} / ${items.length}`}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Content */}
       {(!loading && items.length === 0) ? (
         <EmptyState
-          title="Aucun projet pour le moment"
-          subtitle="Crée ton premier projet puis configure Contexte / EVSE / Départs."
+          title="Aucun projet"
+          subtitle="Crée un projet lié à un client."
           actionLabel="Créer un projet"
           onAction={() => document.getElementById("new_project_modal").showModal()}
         />
@@ -118,7 +113,7 @@ export default function Projects() {
               <div key={i} className="card bg-base-100/70 border border-base-300 shadow-soft">
                 <div className="card-body">
                   <div className="skeleton h-6 w-3/4" />
-                  <div className="skeleton h-4 w-1/3 mt-3" />
+                  <div className="skeleton h-4 w-1/2 mt-3" />
                   <div className="skeleton h-10 w-full mt-6" />
                 </div>
               </div>
@@ -129,23 +124,30 @@ export default function Projects() {
         </div>
       )}
 
-      {/* Modal création */}
       <dialog id="new_project_modal" className="modal">
         <div className="modal-box bg-base-100/80 backdrop-blur border border-base-300 shadow-soft">
           <h3 className="font-bold text-lg">Nouveau projet</h3>
-          <p className="py-2 opacity-70">Donne un nom clair (site + nb points + puissance).</p>
+          <p className="py-2 opacity-70">Choisis le client puis donne un nom clair.</p>
 
-          <input
-            className="input input-bordered w-full"
-            placeholder="Ex: Parking SFR — 8 points — 22kW"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-          />
+          <label className="form-control">
+            <div className="label"><span className="label-text">Client (obligatoire)</span></div>
+            <select className="select select-bordered" value={newClientId} onChange={(e) => setNewClientId(e.target.value)}>
+              <option value="" disabled>Choisir…</option>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+
+          <label className="form-control mt-3">
+            <div className="label"><span className="label-text">Nom du projet</span></div>
+            <input className="input input-bordered" value={newName} onChange={(e) => setNewName(e.target.value)}
+              placeholder="Ex: Maison Dupont — 1 point — 7,4kW" />
+          </label>
 
           <div className="modal-action">
             <form method="dialog" className="flex gap-2">
               <button className="btn btn-ghost">Annuler</button>
-              <button className="btn btn-primary" disabled={newName.trim().length < 2} onClick={(e) => { e.preventDefault(); createProject(); }}>
+              <button className="btn btn-primary" disabled={newName.trim().length < 2 || !newClientId}
+                onClick={(e) => { e.preventDefault(); createProject(); }}>
                 Créer
               </button>
             </form>
