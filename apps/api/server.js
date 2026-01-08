@@ -518,13 +518,42 @@ app.post("/projects/:projectId/calculations/run", async (req, reply) => {
       [req.tenant.id, projectId]
     );
 
+    let ctxRow = ctx.rows[0] ?? null;
+    let ctxDefaultUsed = false;
+    if (!ctxRow) {
+      ctxDefaultUsed = true;
+      ctxRow = {
+        earthing_system: "TT",
+        supply_phase: "MONO_230",
+        nominal_voltage_v: 230,
+        prospective_sc_ik_a: 3000,
+        ambient_temp_c: 30,
+        voltage_drop_limit_percent: 3
+      };
+    }
+
     const calc = runIrveCalculation({
-      context: ctx.rows[0] ?? null,
+      context: ctxRow,
       evseList: evse.rows,
       feederList: feeders.rows
     });
 
-    const inputs = { context: ctx.rows[0] ?? null, evse: evse.rows, feeders: feeders.rows };
+    if (ctxDefaultUsed) {
+      calc.nonConformities = [
+        {
+          severity: "WARN",
+          code: "CTX_DEFAULT_USED",
+          standard_ref: null,
+          clause_ref: null,
+          message: "Contexte non enregistré : valeurs par défaut (profil Maison) appliquées pour le calcul. À valider sur site.",
+          meta: { preset: "HOME_FR" }
+        },
+        ...(calc.nonConformities || [])
+      ];
+      if (calc.summary && typeof calc.summary.warns === "number") calc.summary.warns += 1;
+    }
+
+    const inputs = { context: ctxRow, evse: evse.rows, feeders: feeders.rows };
     const outputs = { ...calc };
 
     const run = await db.query(
