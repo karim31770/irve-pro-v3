@@ -29,7 +29,7 @@ const PRESETS = {
     earthingSystem: "TT",
     supplyPhase: "MONO_230",
     nominalVoltageV: 230,
-    prospectiveScIkA: 3000,           // valeur indicative “réaliste” (à confirmer)
+    prospectiveScIkA: 3000,          // indicatif (à valider)
     ambientTempC: 30,
     voltageDropLimitPercent: 3
   },
@@ -52,14 +52,12 @@ export default function ProjectDetail() {
   const [tab, setTab] = useState("elec");
   const [project, setProject] = useState(null);
 
-  // Contexte
   const [preset, setPreset] = useState("HOME_FR");
   const [advanced, setAdvanced] = useState(false);
 
   const [ctx, setCtx] = useState(null);
   const [ctxForm, setCtxForm] = useState({ ...PRESETS.HOME_FR });
 
-  // EVSE
   const [evse, setEvse] = useState([]);
   const [evseForm, setEvseForm] = useState({
     name: "",
@@ -70,7 +68,6 @@ export default function ProjectDetail() {
     has6mADcDetection: false
   });
 
-  // Départs
   const [feeders, setFeeders] = useState([]);
   const [feederForm, setFeederForm] = useState({
     name: "",
@@ -79,7 +76,6 @@ export default function ProjectDetail() {
     cableSectionMm2: ""
   });
 
-  // Calcul
   const [calc, setCalc] = useState(null);
   const [calcLoading, setCalcLoading] = useState(false);
 
@@ -90,7 +86,6 @@ export default function ProjectDetail() {
   }, []);
 
   function isContextRequiredOk() {
-    // Obligatoires : régime de neutre + mono/tri (+ tension auto)
     return !!ctxForm.earthingSystem && !!ctxForm.supplyPhase;
   }
 
@@ -102,7 +97,7 @@ export default function ProjectDetail() {
       earthingSystem: ctxForm.earthingSystem,
       supplyPhase: ctxForm.supplyPhase,
       nominalVoltageV: u,
-      prospectiveScIkA: toNum(ctxForm.prospectiveScIkA, null),        // recommandé
+      prospectiveScIkA: toNum(ctxForm.prospectiveScIkA, null),
       ambientTempC: toNum(ctxForm.ambientTempC, 30),
       voltageDropLimitPercent: toNum(ctxForm.voltageDropLimitPercent, 3)
     };
@@ -125,15 +120,15 @@ export default function ProjectDetail() {
     setCalc(latest);
 
     if (c) {
-      const supply = c.supply_phase ?? "MONO_230";
-      const autoU = autoVoltageFromSupply(supply);
+      const supply = c.supply_phase ?? PRESETS.HOME_FR.supplyPhase;
+      const uAuto = autoVoltageFromSupply(supply);
       setCtxForm({
         earthingSystem: c.earthing_system ?? PRESETS.HOME_FR.earthingSystem,
         supplyPhase: supply,
-        nominalVoltageV: c.nominal_voltage_v ?? autoU,
+        nominalVoltageV: c.nominal_voltage_v ?? uAuto,
         prospectiveScIkA: c.prospective_sc_ik_a ?? PRESETS.HOME_FR.prospectiveScIkA,
-        ambientTempC: c.ambient_temp_c ?? 30,
-        voltageDropLimitPercent: c.voltage_drop_limit_percent ?? 3
+        ambientTempC: c.ambient_temp_c ?? PRESETS.HOME_FR.ambientTempC,
+        voltageDropLimitPercent: c.voltage_drop_limit_percent ?? PRESETS.HOME_FR.voltageDropLimitPercent
       });
     }
   }
@@ -278,7 +273,6 @@ export default function ProjectDetail() {
 
           {tab === "elec" ? (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Contexte simplifié */}
               <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft lg:col-span-3">
                 <div className="card-body">
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -287,7 +281,7 @@ export default function ProjectDetail() {
                         <Sparkles className="w-5 h-5" /> Contexte (simple)
                       </h2>
                       <div className="text-sm opacity-70 mt-1">
-                        Obligatoire : régime de neutre + mono/tri. Recommandé : Ik (pour Icu).
+                        Obligatoire : régime de neutre + mono/tri. Le reste est prérempli “Maison FR”.
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -312,14 +306,15 @@ export default function ProjectDetail() {
 
                     <label className="form-control">
                       <div className="label">
-                        <span className="label-text">Régime de neutre <span className="badge badge-error badge-sm ml-2">Obligatoire</span></span>
+                        <span className="label-text">
+                          Régime de neutre <span className="badge badge-error badge-sm ml-2">Obligatoire</span>
+                        </span>
                       </div>
-                      <select
-                        className={`select select-bordered ${ctxForm.earthingSystem ? "" : "select-error"}`}
+                      <select className={`select select-bordered ${ctxForm.earthingSystem ? "" : "select-error"}`}
                         value={ctxForm.earthingSystem}
                         onChange={(e) => setCtxForm({ ...ctxForm, earthingSystem: e.target.value })}
                       >
-                        <option value="TT">TT (très courant résidentiel)</option>
+                        <option value="TT">TT (courant résidentiel)</option>
                         <option value="TN_S">TN-S</option>
                         <option value="TN_C">TN-C</option>
                         <option value="IT">IT</option>
@@ -328,10 +323,11 @@ export default function ProjectDetail() {
 
                     <label className="form-control">
                       <div className="label">
-                        <span className="label-text">Alimentation <span className="badge badge-error badge-sm ml-2">Obligatoire</span></span>
+                        <span className="label-text">
+                          Alimentation <span className="badge badge-error badge-sm ml-2">Obligatoire</span>
+                        </span>
                       </div>
-                      <select
-                        className={`select select-bordered ${ctxForm.supplyPhase ? "" : "select-error"}`}
+                      <select className={`select select-bordered ${ctxForm.supplyPhase ? "" : "select-error"}`}
                         value={ctxForm.supplyPhase}
                         onChange={(e) => {
                           const supplyPhase = e.target.value;
@@ -352,14 +348,12 @@ export default function ProjectDetail() {
                     <span className="badge badge-outline">Ik : {ctxForm.prospectiveScIkA ? `${ctxForm.prospectiveScIkA} A` : "non renseigné"}</span>
                   </div>
 
-                  <div className="mt-4">
-                    <div className="alert alert-warning bg-base-100/50 border border-base-300">
-                      <AlertTriangle className="w-5 h-5" />
-                      <div>
-                        <div className="font-semibold">Champs recommandés</div>
-                        <div className="text-sm opacity-80">
-                          Ik (A) améliore fortement la recommandation de pouvoir de coupure (Icu). Si tu ne sais pas, laisse la valeur par défaut ou mets-la à vide.
-                        </div>
+                  <div className="mt-4 alert alert-warning bg-base-100/50 border border-base-300">
+                    <AlertTriangle className="w-5 h-5" />
+                    <div>
+                      <div className="font-semibold">Recommandé : Ik</div>
+                      <div className="text-sm opacity-80">
+                        Ik (A) améliore la recommandation Icu. Si tu ne connais pas, garde la valeur profil ou mets vide.
                       </div>
                     </div>
                   </div>
@@ -368,157 +362,126 @@ export default function ProjectDetail() {
                     <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
                       <label className="form-control">
                         <div className="label"><span className="label-text">Ik présumé (A) <span className="badge badge-warning badge-sm ml-2">Recommandé</span></span></div>
-                        <input
-                          className="input input-bordered"
-                          value={ctxForm.prospectiveScIkA}
-                          onChange={(e) => setCtxForm({ ...ctxForm, prospectiveScIkA: e.target.value })}
-                          placeholder="Ex: 3000"
-                        />
-                        <div className="label">
-                          <span className="label-text-alt opacity-70">Valeur indicative : à confirmer par mesure ou données amont.</span>
-                        </div>
+                        <input className="input input-bordered" value={ctxForm.prospectiveScIkA}
+                          onChange={(e) => setCtxForm({ ...ctxForm, prospectiveScIkA: e.target.value })} />
                       </label>
 
                       <label className="form-control">
                         <div className="label"><span className="label-text">Température (°C)</span></div>
-                        <input
-                          className="input input-bordered"
-                          value={ctxForm.ambientTempC}
-                          onChange={(e) => setCtxForm({ ...ctxForm, ambientTempC: e.target.value })}
-                        />
+                        <input className="input input-bordered" value={ctxForm.ambientTempC}
+                          onChange={(e) => setCtxForm({ ...ctxForm, ambientTempC: e.target.value })} />
                       </label>
 
                       <label className="form-control">
                         <div className="label"><span className="label-text">Chute de tension max (%)</span></div>
-                        <input
-                          className="input input-bordered"
-                          value={ctxForm.voltageDropLimitPercent}
-                          onChange={(e) => setCtxForm({ ...ctxForm, voltageDropLimitPercent: e.target.value })}
-                        />
-                      </label>
-
-                      <label className="form-control md:col-span-3">
-                        <div className="label"><span className="label-text">Tension nominale (override)</span></div>
-                        <input
-                          className="input input-bordered"
-                          value={ctxForm.nominalVoltageV}
-                          onChange={(e) => setCtxForm({ ...ctxForm, nominalVoltageV: e.target.value })}
-                        />
-                        <div className="label">
-                          <span className="label-text-alt opacity-70">En mode simple, la tension est fixée automatiquement selon mono/tri.</span>
-                        </div>
+                        <input className="input input-bordered" value={ctxForm.voltageDropLimitPercent}
+                          onChange={(e) => setCtxForm({ ...ctxForm, voltageDropLimitPercent: e.target.value })} />
                       </label>
                     </div>
                   ) : null}
 
-                  <div className="mt-4 text-xs opacity-60">
-                    Defaults “ménage moyen” (profil Maison) : TT, mono 230V, Ik 3000A (indicatif), ΔU 3%, 30°C.
-                  </div>
-                </div>
-              </div>
+                  <div className="mt-6 divider"></div>
 
-              {/* EVSE */}
-              <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft lg:col-span-2">
-                <div className="card-body">
-                  <h2 className="card-title">EVSE</h2>
+                  {/* EVSE */}
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div className="card bg-base-100/50 border border-base-300 lg:col-span-2">
+                      <div className="card-body">
+                        <h2 className="card-title">EVSE</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mt-2">
+                          <input className="input input-bordered md:col-span-2" placeholder="Nom (ex: Borne 1)"
+                            value={evseForm.name} onChange={(e) => setEvseForm({ ...evseForm, name: e.target.value })} />
+                          <select className="select select-bordered" value={evseForm.phase}
+                            onChange={(e) => setEvseForm({ ...evseForm, phase: e.target.value })}>
+                            <option value="MONO">Mono</option>
+                            <option value="TRI">Tri</option>
+                          </select>
+                          <input className="input input-bordered" placeholder="kW" value={evseForm.maxPowerKw}
+                            onChange={(e) => setEvseForm({ ...evseForm, maxPowerKw: e.target.value })} />
+                          <input className="input input-bordered" placeholder="A (optionnel)" value={evseForm.maxCurrentA}
+                            onChange={(e) => setEvseForm({ ...evseForm, maxCurrentA: e.target.value })} />
+                        </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mt-2">
-                    <input className="input input-bordered md:col-span-2" placeholder="Nom (ex: Borne 1)"
-                      value={evseForm.name} onChange={(e) => setEvseForm({ ...evseForm, name: e.target.value })} />
+                        <label className="label cursor-pointer justify-start gap-3 mt-2">
+                          <input type="checkbox" className="toggle" checked={evseForm.has6mADcDetection}
+                            onChange={(e) => setEvseForm({ ...evseForm, has6mADcDetection: e.target.checked })} />
+                          <span className="label-text">Détection DC 6 mA intégrée</span>
+                        </label>
 
-                    <select className="select select-bordered" value={evseForm.phase}
-                      onChange={(e) => setEvseForm({ ...evseForm, phase: e.target.value })}>
-                      <option value="MONO">Mono</option>
-                      <option value="TRI">Tri</option>
-                    </select>
+                        <div className="mt-3">
+                          <button className="btn btn-primary" disabled={evseForm.name.length < 2} onClick={addEvse}>Ajouter EVSE</button>
+                        </div>
 
-                    <input className="input input-bordered" placeholder="kW"
-                      value={evseForm.maxPowerKw} onChange={(e) => setEvseForm({ ...evseForm, maxPowerKw: e.target.value })} />
+                        <div className="divider" />
 
-                    <input className="input input-bordered" placeholder="A (optionnel)"
-                      value={evseForm.maxCurrentA} onChange={(e) => setEvseForm({ ...evseForm, maxCurrentA: e.target.value })} />
-                  </div>
+                        <div className="overflow-x-auto">
+                          <table className="table table-zebra">
+                            <thead><tr><th>Nom</th><th>Phase</th><th>kW</th><th>6 mA DC</th><th></th></tr></thead>
+                            <tbody>
+                              {evse.map(x => (
+                                <tr key={x.id}>
+                                  <td className="font-medium">{x.name}</td>
+                                  <td>{x.phase}</td>
+                                  <td>{x.max_power_kw}</td>
+                                  <td>{x.has_6ma_dc_detection ? "Oui" : "Non"}</td>
+                                  <td><button className="btn btn-sm btn-ghost" onClick={() => deleteEvse(x.id)}>Supprimer</button></td>
+                                </tr>
+                              ))}
+                              {evse.length === 0 ? <tr><td colSpan={5} className="opacity-60">Aucune EVSE</td></tr> : null}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
 
-                  <label className="label cursor-pointer justify-start gap-3 mt-2">
-                    <input type="checkbox" className="toggle"
-                      checked={evseForm.has6mADcDetection}
-                      onChange={(e) => setEvseForm({ ...evseForm, has6mADcDetection: e.target.checked })} />
-                    <span className="label-text">Détection DC 6 mA intégrée</span>
-                  </label>
+                    {/* Départs */}
+                    <div className="card bg-base-100/50 border border-base-300">
+                      <div className="card-body">
+                        <h2 className="card-title">Départs</h2>
 
-                  <div className="mt-3">
-                    <button className="btn btn-primary" disabled={evseForm.name.length < 2} onClick={addEvse}>Ajouter EVSE</button>
-                  </div>
+                        <input className="input input-bordered w-full" placeholder="Nom (ex: Départ Borne 1)"
+                          value={feederForm.name} onChange={(e) => setFeederForm({ ...feederForm, name: e.target.value })} />
 
-                  <div className="divider" />
+                        <select className="select select-bordered w-full mt-2"
+                          value={feederForm.evseId} onChange={(e) => setFeederForm({ ...feederForm, evseId: e.target.value })}>
+                          <option value="">(optionnel) Lier à une EVSE</option>
+                          {evse.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                        </select>
 
-                  <div className="overflow-x-auto">
-                    <table className="table table-zebra">
-                      <thead><tr><th>Nom</th><th>Phase</th><th>kW</th><th>6 mA DC</th><th></th></tr></thead>
-                      <tbody>
-                        {evse.map(x => (
-                          <tr key={x.id}>
-                            <td className="font-medium">{x.name}</td>
-                            <td>{x.phase}</td>
-                            <td>{x.max_power_kw}</td>
-                            <td>{x.has_6ma_dc_detection ? "Oui" : "Non"}</td>
-                            <td><button className="btn btn-sm btn-ghost" onClick={() => deleteEvse(x.id)}>Supprimer</button></td>
-                          </tr>
-                        ))}
-                        {evse.length === 0 ? <tr><td colSpan={5} className="opacity-60">Aucune EVSE</td></tr> : null}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          <input className="input input-bordered" placeholder="Longueur (m)" value={feederForm.lengthM}
+                            onChange={(e) => setFeederForm({ ...feederForm, lengthM: e.target.value })} />
+                          <input className="input input-bordered" placeholder="Section (mm²) (optionnel)" value={feederForm.cableSectionMm2}
+                            onChange={(e) => setFeederForm({ ...feederForm, cableSectionMm2: e.target.value })} />
+                        </div>
 
-              {/* Départs */}
-              <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
-                <div className="card-body">
-                  <h2 className="card-title">Départs</h2>
+                        <button className="btn btn-primary mt-3" disabled={feederForm.name.length < 2} onClick={addFeeder}>
+                          Ajouter départ
+                        </button>
 
-                  <input className="input input-bordered w-full" placeholder="Nom (ex: Départ Borne 1)"
-                    value={feederForm.name} onChange={(e) => setFeederForm({ ...feederForm, name: e.target.value })} />
+                        <div className="divider" />
 
-                  <select className="select select-bordered w-full mt-2"
-                    value={feederForm.evseId} onChange={(e) => setFeederForm({ ...feederForm, evseId: e.target.value })}>
-                    <option value="">(optionnel) Lier à une EVSE</option>
-                    {evse.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
-                  </select>
+                        <div className="overflow-x-auto">
+                          <table className="table table-zebra">
+                            <thead><tr><th>Nom</th><th>m</th><th>mm²</th><th></th></tr></thead>
+                            <tbody>
+                              {feeders.map(f => (
+                                <tr key={f.id}>
+                                  <td className="font-medium">{f.name}</td>
+                                  <td>{f.length_m}</td>
+                                  <td>{f.cable_section_mm2 ?? "-"}</td>
+                                  <td><button className="btn btn-sm btn-ghost" onClick={() => deleteFeeder(f.id)}>Supprimer</button></td>
+                                </tr>
+                              ))}
+                              {feeders.length === 0 ? <tr><td colSpan={4} className="opacity-60">Aucun départ</td></tr> : null}
+                            </tbody>
+                          </table>
+                        </div>
 
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <input className="input input-bordered" placeholder="Longueur (m)" value={feederForm.lengthM}
-                      onChange={(e) => setFeederForm({ ...feederForm, lengthM: e.target.value })} />
-                    <input className="input input-bordered" placeholder="Section (mm²) (optionnel)" value={feederForm.cableSectionMm2}
-                      onChange={(e) => setFeederForm({ ...feederForm, cableSectionMm2: e.target.value })} />
-                  </div>
-
-                  <button className="btn btn-primary mt-3" disabled={feederForm.name.length < 2} onClick={addFeeder}>
-                    Ajouter départ
-                  </button>
-
-                  <div className="divider" />
-
-                  <div className="overflow-x-auto">
-                    <table className="table table-zebra">
-                      <thead><tr><th>Nom</th><th>EVSE</th><th>m</th><th>mm²</th><th></th></tr></thead>
-                      <tbody>
-                        {feeders.map(f => (
-                          <tr key={f.id}>
-                            <td className="font-medium">{f.name}</td>
-                            <td className="text-sm opacity-70">{f.evse_name || "-"}</td>
-                            <td>{f.length_m}</td>
-                            <td>{f.cable_section_mm2 ?? "-"}</td>
-                            <td><button className="btn btn-sm btn-ghost" onClick={() => deleteFeeder(f.id)}>Supprimer</button></td>
-                          </tr>
-                        ))}
-                        {feeders.length === 0 ? <tr><td colSpan={5} className="opacity-60">Aucun départ</td></tr> : null}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="mt-3 text-xs opacity-60">
-                    Étape suivante : onglet “Calcul & conformité” → Calculer automatiquement.
+                        <div className="mt-3 text-xs opacity-60">
+                          Ensuite : onglet “Calcul & conformité” → Calculer automatiquement.
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -531,10 +494,9 @@ export default function ProjectDetail() {
                     <div>
                       <h2 className="card-title">Calcul automatique & conformité</h2>
                       <div className="text-sm opacity-70 mt-1">
-                        Le calcul utilise le contexte enregistré. Si tu n’as pas renseigné Ik, l’Icu sera moins fiable.
+                        Le calcul fonctionne même si le contexte n’est pas enregistré (profil Maison par défaut), mais ce sera moins fiable.
                       </div>
                     </div>
-
                     <div className="flex gap-2">
                       <button className={`btn btn-primary ${calcLoading ? "btn-disabled" : ""}`} onClick={runCalc}>
                         <Play className="w-4 h-4" />
@@ -545,18 +507,6 @@ export default function ProjectDetail() {
                       </button>
                     </div>
                   </div>
-
-                  {!ctx ? (
-                    <div className="alert alert-warning bg-base-100/50 border border-base-300 mt-4">
-                      <AlertTriangle className="w-5 h-5" />
-                      <div>
-                        <div className="font-semibold">Contexte non enregistré</div>
-                        <div className="text-sm opacity-80">
-                          Clique “Enregistrer” dans l’onglet Conception. Sinon le moteur utilisera des valeurs par défaut (moins fiable).
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
 
                   {calc ? (
                     <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -578,9 +528,7 @@ export default function ProjectDetail() {
                       </div>
                     </div>
                   ) : (
-                    <div className="mt-4 text-sm opacity-70">
-                      Aucun calcul enregistré. Clique “Calculer automatiquement”.
-                    </div>
+                    <div className="mt-4 text-sm opacity-70">Aucun calcul enregistré. Clique “Calculer automatiquement”.</div>
                   )}
                 </div>
               </div>
@@ -588,7 +536,6 @@ export default function ProjectDetail() {
               <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
                 <div className="card-body">
                   <h3 className="card-title">Non-conformités</h3>
-
                   <div className="mt-2 grid grid-cols-1 gap-2">
                     {(calc?.nonConformities || []).length === 0 ? (
                       <div className="opacity-70">Aucune non-conformité enregistrée.</div>
@@ -614,7 +561,6 @@ export default function ProjectDetail() {
               <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
                 <div className="card-body">
                   <h3 className="card-title">Résultats par départ</h3>
-
                   <div className="overflow-x-auto mt-2">
                     <table className="table">
                       <thead>
@@ -647,10 +593,6 @@ export default function ProjectDetail() {
                         ) : null}
                       </tbody>
                     </table>
-                  </div>
-
-                  <div className="mt-3 text-xs opacity-60">
-                    Les valeurs “profil Maison” sont des defaults réalistes pour démarrer. Pour conformité finale, renseigner/valider Ik et paramètres chantier.
                   </div>
                 </div>
               </div>
