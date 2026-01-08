@@ -3,7 +3,9 @@ import toast from "react-hot-toast";
 import AppShell from "../../../components/AppShell";
 import { apiFetch } from "../../../lib/api";
 import { storage } from "../../../lib/storage";
-import { Play, RefreshCw, AlertTriangle, ShieldAlert, CheckCircle2, Sparkles, Sliders } from "lucide-react";
+import {
+  Play, RefreshCw, AlertTriangle, ShieldAlert, CheckCircle2, Sparkles, Sliders, Zap
+} from "lucide-react";
 
 function toNum(v, fallback = null) {
   if (v === "" || v == null) return fallback;
@@ -29,9 +31,10 @@ const PRESETS = {
     earthingSystem: "TT",
     supplyPhase: "MONO_230",
     nominalVoltageV: 230,
-    prospectiveScIkA: 3000,          // indicatif (à valider)
+    prospectiveScIkA: 3000,          // indicatif à valider
     ambientTempC: 30,
-    voltageDropLimitPercent: 3
+    voltageDropLimitPercent: 3,
+    availablePowerKw: 9              // ménage moyen (9 kVA ~ 9 kW indicatif)
   },
   SMALL_TERTIARY: {
     label: "Petit tertiaire (indicatif)",
@@ -40,7 +43,8 @@ const PRESETS = {
     nominalVoltageV: 400,
     prospectiveScIkA: 6000,
     ambientTempC: 30,
-    voltageDropLimitPercent: 3
+    voltageDropLimitPercent: 3,
+    availablePowerKw: 36
   }
 };
 
@@ -51,6 +55,7 @@ function autoVoltageFromSupply(supplyPhase) {
 export default function ProjectDetail() {
   const [tab, setTab] = useState("elec");
   const [project, setProject] = useState(null);
+  const [clientInfo, setClientInfo] = useState(null);
 
   const [preset, setPreset] = useState("HOME_FR");
   const [advanced, setAdvanced] = useState(false);
@@ -99,7 +104,8 @@ export default function ProjectDetail() {
       nominalVoltageV: u,
       prospectiveScIkA: toNum(ctxForm.prospectiveScIkA, null),
       ambientTempC: toNum(ctxForm.ambientTempC, 30),
-      voltageDropLimitPercent: toNum(ctxForm.voltageDropLimitPercent, 3)
+      voltageDropLimitPercent: toNum(ctxForm.voltageDropLimitPercent, 3),
+      availablePowerKw: toNum(ctxForm.availablePowerKw, null)
     };
   }
 
@@ -119,6 +125,12 @@ export default function ProjectDetail() {
     setFeeders(f);
     setCalc(latest);
 
+    if (p?.client_id) {
+      apiFetch(`/clients/${p.client_id}`).then(setClientInfo).catch(() => setClientInfo(null));
+    } else {
+      setClientInfo(null);
+    }
+
     if (c) {
       const supply = c.supply_phase ?? PRESETS.HOME_FR.supplyPhase;
       const uAuto = autoVoltageFromSupply(supply);
@@ -128,7 +140,8 @@ export default function ProjectDetail() {
         nominalVoltageV: c.nominal_voltage_v ?? uAuto,
         prospectiveScIkA: c.prospective_sc_ik_a ?? PRESETS.HOME_FR.prospectiveScIkA,
         ambientTempC: c.ambient_temp_c ?? PRESETS.HOME_FR.ambientTempC,
-        voltageDropLimitPercent: c.voltage_drop_limit_percent ?? PRESETS.HOME_FR.voltageDropLimitPercent
+        voltageDropLimitPercent: c.voltage_drop_limit_percent ?? PRESETS.HOME_FR.voltageDropLimitPercent,
+        availablePowerKw: c.available_power_kw ?? PRESETS.HOME_FR.availablePowerKw
       });
     }
   }
@@ -151,15 +164,45 @@ export default function ProjectDetail() {
         toast.error("Champs obligatoires manquants : régime de neutre + mono/tri");
         return;
       }
-      await apiFetch(`/projects/${projectId}/electrical-context`, {
-        method: "PUT",
-        body: contextPayload()
-      });
+      await apiFetch(`/projects/${projectId}/electrical-context`, { method: "PUT", body: contextPayload() });
       toast.success("Contexte enregistré");
       await loadAll();
     } catch (e) {
       toast.error(e.message);
     }
+  }
+
+  // AUTO 230->400 selon puissance (AC)
+  function handleEvsePowerChange(v) {
+    const p = toNum(v, null);
+
+    // limite AC max 44 kW
+    if (evseForm.evseType === "AC" && p != null && p > 44) {
+      toast.error("Borne AC : puissance max 44 kW");
+      setEvseForm({ ...evseForm, maxPowerKw: 44 });
+      return;
+    }
+
+    const nextPower = (p == null) ? v : p;
+    let nextPhase = evseForm.phase;
+
+    if (evseForm.evseType === "AC" && p != null) {
+      if (p > 7.4) {
+        nextPhase = "TRI";
+        if (ctxForm.supplyPhase !== "TRI_400") {
+          toast("Puissance > 7.4 kW → passage auto en TRI 400V", { icon: "⚡" });
+          setCtxForm({ ...ctxForm, supplyPhase: "TRI_400", nominalVoltageV: 400 });
+        }
+      } else {
+        nextPhase = "MONO";
+        if (ctxForm.supplyPhase !== "MONO_230") {
+          toast("Puissance ≤ 7.4 kW → passage auto en MONO 230V", { icon: "🔌" });
+          setCtxForm({ ...ctxForm, supplyPhase: "MONO_230", nominalVoltageV: 230 });
+        }
+      }
+    }
+
+    setEvseForm({ ...evseForm, maxPowerKw: nextPower, phase: nextPhase });
   }
 
   async function addEvse() {
@@ -266,14 +309,47 @@ export default function ProjectDetail() {
             </div>
           </div>
 
+          {clientInfo ? (
+            <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft mb-4">
+              <div className="card-body">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm opacity-70">Client</div>
+                    <div className="text-xl font-semibold">{clientInfo.name}</div>
+                    <div className="text-sm opacity-70 mt-2">
+                      {clientInfo.contact_name ? <div>Contact: {clientInfo.contact_name}</div> : null}
+                      {clientInfo.phone ? <div>Tél: {clientInfo.phone}</div> : null}
+                      {clientInfo.email ? <div>Email: {clientInfo.email}</div> : null}
+                      {clientInfo.address_line1 ? <div className="mt-2">{clientInfo.address_line1}</div> : null}
+                      {clientInfo.address_line2 ? <div>{clientInfo.address_line2}</div> : null}
+                      {(clientInfo.postal_code || clientInfo.city) ? <div>{clientInfo.postal_code || ""} {clientInfo.city || ""}</div> : null}
+                      {clientInfo.country ? <div>{clientInfo.country}</div> : null}
+                    </div>
+                  </div>
+                  <a className="btn btn-sm btn-primary" href={`/app/clients/${clientInfo.id}`}>Ouvrir</a>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="alert alert-warning bg-base-100/50 border border-base-300 mb-4">
+              <AlertTriangle className="w-5 h-5" />
+              <div>
+                <div className="font-semibold">Client manquant</div>
+                <div className="text-sm opacity-80">
+                  Ce projet n’est pas rattaché à un client. Crée un nouveau projet via la page Projets (client obligatoire).
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="tabs tabs-boxed mb-4">
             <a className={`tab ${tab === "elec" ? "tab-active" : ""}`} onClick={() => setTab("elec")}>Conception</a>
             <a className={`tab ${tab === "calc" ? "tab-active" : ""}`} onClick={() => setTab("calc")}>Calcul & conformité</a>
           </div>
 
           {tab === "elec" ? (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft lg:col-span-3">
+            <div className="grid grid-cols-1 gap-4">
+              <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
                 <div className="card-body">
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     <div>
@@ -281,7 +357,7 @@ export default function ProjectDetail() {
                         <Sparkles className="w-5 h-5" /> Contexte (simple)
                       </h2>
                       <div className="text-sm opacity-70 mt-1">
-                        Obligatoire : régime de neutre + mono/tri. Le reste est prérempli “Maison FR”.
+                        Obligatoire : régime de neutre + mono/tri. Recommandé : Ik & puissance dispo (délesteur).
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -306,15 +382,13 @@ export default function ProjectDetail() {
 
                     <label className="form-control">
                       <div className="label">
-                        <span className="label-text">
-                          Régime de neutre <span className="badge badge-error badge-sm ml-2">Obligatoire</span>
-                        </span>
+                        <span className="label-text">Régime de neutre <span className="badge badge-error badge-sm ml-2">Obligatoire</span></span>
                       </div>
                       <select className={`select select-bordered ${ctxForm.earthingSystem ? "" : "select-error"}`}
                         value={ctxForm.earthingSystem}
                         onChange={(e) => setCtxForm({ ...ctxForm, earthingSystem: e.target.value })}
                       >
-                        <option value="TT">TT (courant résidentiel)</option>
+                        <option value="TT">TT (résidentiel)</option>
                         <option value="TN_S">TN-S</option>
                         <option value="TN_C">TN-C</option>
                         <option value="IT">IT</option>
@@ -323,9 +397,7 @@ export default function ProjectDetail() {
 
                     <label className="form-control">
                       <div className="label">
-                        <span className="label-text">
-                          Alimentation <span className="badge badge-error badge-sm ml-2">Obligatoire</span>
-                        </span>
+                        <span className="label-text">Alimentation <span className="badge badge-error badge-sm ml-2">Obligatoire</span></span>
                       </div>
                       <select className={`select select-bordered ${ctxForm.supplyPhase ? "" : "select-error"}`}
                         value={ctxForm.supplyPhase}
@@ -335,7 +407,7 @@ export default function ProjectDetail() {
                           setCtxForm({ ...ctxForm, supplyPhase, nominalVoltageV: u });
                         }}
                       >
-                        <option value="MONO_230">Mono 230V (ménage)</option>
+                        <option value="MONO_230">Mono 230V</option>
                         <option value="TRI_400">Tri 400V</option>
                       </select>
                     </label>
@@ -344,34 +416,27 @@ export default function ProjectDetail() {
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <span className="badge badge-outline">Tension auto : {autoU} V</span>
                     <span className="badge badge-outline">ΔU max : {ctxForm.voltageDropLimitPercent}%</span>
-                    <span className="badge badge-outline">T° : {ctxForm.ambientTempC}°C</span>
-                    <span className="badge badge-outline">Ik : {ctxForm.prospectiveScIkA ? `${ctxForm.prospectiveScIkA} A` : "non renseigné"}</span>
-                  </div>
-
-                  <div className="mt-4 alert alert-warning bg-base-100/50 border border-base-300">
-                    <AlertTriangle className="w-5 h-5" />
-                    <div>
-                      <div className="font-semibold">Recommandé : Ik</div>
-                      <div className="text-sm opacity-80">
-                        Ik (A) améliore la recommandation Icu. Si tu ne connais pas, garde la valeur profil ou mets vide.
-                      </div>
-                    </div>
+                    <span className="badge badge-outline">Ik : {ctxForm.prospectiveScIkA ? `${ctxForm.prospectiveScIkA} A` : "?"}</span>
+                    <span className="badge badge-outline">Puissance dispo : {ctxForm.availablePowerKw ? `${ctxForm.availablePowerKw} kW` : "?"}</span>
                   </div>
 
                   {advanced ? (
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
                       <label className="form-control">
-                        <div className="label"><span className="label-text">Ik présumé (A) <span className="badge badge-warning badge-sm ml-2">Recommandé</span></span></div>
+                        <div className="label"><span className="label-text">Ik présumé (A)</span></div>
                         <input className="input input-bordered" value={ctxForm.prospectiveScIkA}
                           onChange={(e) => setCtxForm({ ...ctxForm, prospectiveScIkA: e.target.value })} />
                       </label>
-
+                      <label className="form-control">
+                        <div className="label"><span className="label-text">Puissance dispo (kW)</span></div>
+                        <input className="input input-bordered" value={ctxForm.availablePowerKw}
+                          onChange={(e) => setCtxForm({ ...ctxForm, availablePowerKw: e.target.value })} />
+                      </label>
                       <label className="form-control">
                         <div className="label"><span className="label-text">Température (°C)</span></div>
                         <input className="input input-bordered" value={ctxForm.ambientTempC}
                           onChange={(e) => setCtxForm({ ...ctxForm, ambientTempC: e.target.value })} />
                       </label>
-
                       <label className="form-control">
                         <div className="label"><span className="label-text">Chute de tension max (%)</span></div>
                         <input className="input input-bordered" value={ctxForm.voltageDropLimitPercent}
@@ -380,9 +445,8 @@ export default function ProjectDetail() {
                     </div>
                   ) : null}
 
-                  <div className="mt-6 divider"></div>
+                  <div className="divider mt-6"></div>
 
-                  {/* EVSE */}
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                     <div className="card bg-base-100/50 border border-base-300 lg:col-span-2">
                       <div className="card-body">
@@ -390,19 +454,29 @@ export default function ProjectDetail() {
                         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mt-2">
                           <input className="input input-bordered md:col-span-2" placeholder="Nom (ex: Borne 1)"
                             value={evseForm.name} onChange={(e) => setEvseForm({ ...evseForm, name: e.target.value })} />
+
                           <select className="select select-bordered" value={evseForm.phase}
                             onChange={(e) => setEvseForm({ ...evseForm, phase: e.target.value })}>
                             <option value="MONO">Mono</option>
                             <option value="TRI">Tri</option>
                           </select>
-                          <input className="input input-bordered" placeholder="kW" value={evseForm.maxPowerKw}
-                            onChange={(e) => setEvseForm({ ...evseForm, maxPowerKw: e.target.value })} />
-                          <input className="input input-bordered" placeholder="A (optionnel)" value={evseForm.maxCurrentA}
+
+                          <input className="input input-bordered" placeholder="kW"
+                            value={evseForm.maxPowerKw}
+                            onChange={(e) => handleEvsePowerChange(e.target.value)} />
+
+                          <input className="input input-bordered" placeholder="A (optionnel)"
+                            value={evseForm.maxCurrentA}
                             onChange={(e) => setEvseForm({ ...evseForm, maxCurrentA: e.target.value })} />
                         </div>
 
+                        <div className="mt-2 text-xs opacity-70">
+                          Astuce : &gt; 7.4 kW ⇒ TRI 400V auto. AC max 44 kW.
+                        </div>
+
                         <label className="label cursor-pointer justify-start gap-3 mt-2">
-                          <input type="checkbox" className="toggle" checked={evseForm.has6mADcDetection}
+                          <input type="checkbox" className="toggle"
+                            checked={evseForm.has6mADcDetection}
                             onChange={(e) => setEvseForm({ ...evseForm, has6mADcDetection: e.target.checked })} />
                           <span className="label-text">Détection DC 6 mA intégrée</span>
                         </label>
@@ -433,7 +507,6 @@ export default function ProjectDetail() {
                       </div>
                     </div>
 
-                    {/* Départs */}
                     <div className="card bg-base-100/50 border border-base-300">
                       <div className="card-body">
                         <h2 className="card-title">Départs</h2>
@@ -492,15 +565,14 @@ export default function ProjectDetail() {
                 <div className="card-body">
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     <div>
-                      <h2 className="card-title">Calcul automatique & conformité</h2>
+                      <h2 className="card-title flex items-center gap-2"><Zap className="w-5 h-5" /> Calcul & conformité</h2>
                       <div className="text-sm opacity-70 mt-1">
-                        Le calcul fonctionne même si le contexte n’est pas enregistré (profil Maison par défaut), mais ce sera moins fiable.
+                        Sections câble auto + délestage + incohérences mono/tri + protections suggérées.
                       </div>
                     </div>
                     <div className="flex gap-2">
                       <button className={`btn btn-primary ${calcLoading ? "btn-disabled" : ""}`} onClick={runCalc}>
-                        <Play className="w-4 h-4" />
-                        {calcLoading ? "Calcul..." : "Calculer automatiquement"}
+                        <Play className="w-4 h-4" /> {calcLoading ? "Calcul..." : "Calculer"}
                       </button>
                       <button className="btn btn-ghost" onClick={() => loadAll().catch(e => toast.error(e.message))}>
                         <RefreshCw className="w-4 h-4" /> Recharger
@@ -508,28 +580,17 @@ export default function ProjectDetail() {
                     </div>
                   </div>
 
-                  {calc ? (
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
-                      <div className="stat bg-base-100/50 border border-base-300 rounded-2xl">
-                        <div className="stat-title">Départs</div>
-                        <div className="stat-value text-2xl">{calc.summary?.feeders ?? "-"}</div>
-                      </div>
-                      <div className="stat bg-base-100/50 border border-base-300 rounded-2xl">
-                        <div className="stat-title">EVSE</div>
-                        <div className="stat-value text-2xl">{calc.summary?.evse ?? "-"}</div>
-                      </div>
-                      <div className="stat bg-base-100/50 border border-base-300 rounded-2xl">
-                        <div className="stat-title">WARN</div>
-                        <div className="stat-value text-2xl text-warning">{calc.summary?.warns ?? 0}</div>
-                      </div>
-                      <div className="stat bg-base-100/50 border border-base-300 rounded-2xl">
-                        <div className="stat-title">BLOCK</div>
-                        <div className="stat-value text-2xl text-error">{calc.summary?.blocks ?? 0}</div>
+                  {calc?.summary?.load_shedding_required ? (
+                    <div className="alert alert-warning bg-base-100/50 border border-base-300 mt-4">
+                      <AlertTriangle className="w-5 h-5" />
+                      <div>
+                        <div className="font-semibold">Délestage recommandé</div>
+                        <div className="text-sm opacity-80">
+                          Total EVSE: {calc.summary.total_evse_kw?.toFixed?.(1) ?? calc.summary.total_evse_kw} kW — Puissance dispo: {calc.summary.available_power_kw ?? "?"} kW.
+                        </div>
                       </div>
                     </div>
-                  ) : (
-                    <div className="mt-4 text-sm opacity-70">Aucun calcul enregistré. Clique “Calculer automatiquement”.</div>
-                  )}
+                  ) : null}
                 </div>
               </div>
 
@@ -538,7 +599,7 @@ export default function ProjectDetail() {
                   <h3 className="card-title">Non-conformités</h3>
                   <div className="mt-2 grid grid-cols-1 gap-2">
                     {(calc?.nonConformities || []).length === 0 ? (
-                      <div className="opacity-70">Aucune non-conformité enregistrée.</div>
+                      <div className="opacity-70">Aucune non-conformité.</div>
                     ) : (
                       calc.nonConformities.map((n, idx) => (
                         <div key={idx} className="flex items-start gap-3 p-3 rounded-2xl border border-base-300 bg-base-100/50">
@@ -561,6 +622,7 @@ export default function ProjectDetail() {
               <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
                 <div className="card-body">
                   <h3 className="card-title">Résultats par départ</h3>
+
                   <div className="overflow-x-auto mt-2">
                     <table className="table">
                       <thead>
@@ -569,9 +631,9 @@ export default function ProjectDetail() {
                           <th>EVSE</th>
                           <th>Ib (A)</th>
                           <th>ΔU %</th>
-                          <th>Câble (mm²)</th>
-                          <th>Disj (In)</th>
-                          <th>Icu (kA)</th>
+                          <th>Câble</th>
+                          <th>Disj</th>
+                          <th>Icu</th>
                           <th>DDR</th>
                         </tr>
                       </thead>
@@ -582,17 +644,28 @@ export default function ProjectDetail() {
                             <td className="opacity-70 text-sm">{it.evse_name || "-"}</td>
                             <td>{it.ib_a != null ? it.ib_a.toFixed(1) : "-"}</td>
                             <td>{it.vdrop_percent != null ? it.vdrop_percent.toFixed(2) : "-"}</td>
-                            <td>{it.cable_section_mm2 ?? "-"}</td>
+                            <td>
+                              {it.cable_section_mm2 ?? "-"}
+                              {it.cable_section_source ? (
+                                <span className={`badge badge-sm ml-2 ${it.cable_section_source === "AUTO" ? "badge-info" : "badge-outline"}`}>
+                                  {it.cable_section_source}
+                                </span>
+                              ) : null}
+                            </td>
                             <td>{it.breaker_in_a ? `${it.breaker_in_a}A` : "-"}</td>
-                            <td>{it.breaker_icu_ka != null ? it.breaker_icu_ka : "-"}</td>
+                            <td>{it.breaker_icu_ka != null ? `${it.breaker_icu_ka} kA` : "-"}</td>
                             <td>{it.rcd_type ? `${it.rcd_type} / ${it.rcd_sensitivity_ma}mA` : "-"}</td>
                           </tr>
                         ))}
                         {(calc?.items || []).length === 0 ? (
-                          <tr><td colSpan={8} className="opacity-70">Aucun départ à calculer.</td></tr>
+                          <tr><td colSpan={8} className="opacity-70">Aucun départ.</td></tr>
                         ) : null}
                       </tbody>
                     </table>
+                  </div>
+
+                  <div className="mt-3 text-xs opacity-60">
+                    Section câble “AUTO” = recommandation MVP. Pour conformité NF C 15-100 complète, on remplacera par abaques licenciés + rulesets.
                   </div>
                 </div>
               </div>
