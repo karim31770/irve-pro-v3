@@ -148,33 +148,55 @@ app.post("/auth/login", async (req, reply) => {
 // -----------------------------
 // CLIENTS
 // -----------------------------
+
 app.post("/clients", async (req, reply) => {
   const body = req.body ?? {};
   const name = body.name;
+
   if (typeof name !== "string" || name.length < 2) return reply.code(400).send({ error: "name invalid" });
 
   const out = await withTenantContext(req, async (db) => {
     requireRole(req, ["ADMIN", "MANAGER"]);
+
     const r = await db.query(
-      "insert into client(tenant_id, name) values ($1, $2) returning id, name, created_at",
-      [req.tenant.id, name]
+      `insert into client(
+         tenant_id, name, contact_name, phone, email,
+         address_line1, address_line2, postal_code, city, country
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10,'FR'))
+       returning id, name, created_at`,
+      [
+        req.tenant.id,
+        name,
+        body.contactName ?? null,
+        body.phone ?? null,
+        body.email ?? null,
+        body.addressLine1 ?? null,
+        body.addressLine2 ?? null,
+        body.postalCode ?? null,
+        body.city ?? null,
+        body.country ?? null
+      ]
     );
+
     return r.rows[0];
   });
 
   return reply.code(201).send(out);
 });
 
+
+
 app.get("/clients", async (req, reply) => {
   const out = await withTenantContext(req, async (db) => {
     const r = await db.query(
-      "select id, name, created_at from client where p.tenant_id = $1 order by created_at desc limit 200",
+      "select id, name, created_at from client where tenant_id = $1 order by created_at desc limit 200",
       [req.tenant.id]
     );
     return r.rows;
   });
   return reply.send(out);
 });
+
 
 // -----------------------------
 // SITES (simple)
@@ -251,6 +273,7 @@ app.post("/projects", async (req, reply) => {
   return reply.code(201).send(out);
 });
 
+
 app.get("/projects", async (req, reply) => {
   const out = await withTenantContext(req, async (db) => {
     const r = await db.query(
@@ -258,7 +281,7 @@ app.get("/projects", async (req, reply) => {
        from project p
        left join client c on c.id = p.client_id
        where p.tenant_id = $1
-       order by created_at desc
+       order by p.created_at desc
        limit 200`,
       [req.tenant.id]
     );
@@ -266,6 +289,7 @@ app.get("/projects", async (req, reply) => {
   });
   return reply.send(out);
 });
+
 
 app.get("/projects/:projectId", async (req, reply) => {
   const projectId = req.params?.projectId;
