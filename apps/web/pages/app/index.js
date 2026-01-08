@@ -1,17 +1,21 @@
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import AppShell from "../../components/AppShell";
 import StatCard from "../../components/StatCard";
+import EmptyState from "../../components/EmptyState";
 import { apiFetch } from "../../lib/api";
 import { storage } from "../../lib/storage";
 import { Users, FolderKanban, Zap, ArrowRight } from "lucide-react";
+
+const ProjectsCharts = dynamic(() => import("../../components/ProjectsCharts"), { ssr: false });
 
 export default function Dashboard() {
   const [clients, setClients] = useState([]);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const recentProjects = useMemo(() => projects.slice(0, 5), [projects]);
+  const recentProjects = useMemo(() => projects.slice(0, 6), [projects]);
 
   useEffect(() => {
     if (!storage.getToken()) { window.location.href = "/login"; return; }
@@ -35,7 +39,7 @@ export default function Dashboard() {
         <div>
           <div className="text-sm opacity-70">Bienvenue</div>
           <div className="text-2xl font-semibold">Pilotage IRVE</div>
-          <div className="text-sm opacity-70">Chantiers, parc, conformité et conception électrique.</div>
+          <div className="text-sm opacity-70">Chantiers, conformité et conception électrique.</div>
         </div>
 
         <a className="btn btn-primary" href="/app/projects">
@@ -44,80 +48,53 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard
-          title="Clients"
-          value={loading ? "…" : clients.length}
-          subtitle="Référentiel clients"
-          tone="primary"
-          icon={<Users className="w-6 h-6" />}
-        />
-        <StatCard
-          title="Projets"
-          value={loading ? "…" : projects.length}
-          subtitle="Chantiers & études"
-          tone="secondary"
-          icon={<FolderKanban className="w-6 h-6" />}
-        />
-        <StatCard
-          title="Conception IRVE"
-          value="MVP"
-          subtitle="Contexte → EVSE → Départs"
-          tone="accent"
-          icon={<Zap className="w-6 h-6" />}
-        />
+        <StatCard title="Clients" value={loading ? "…" : clients.length} subtitle="Référentiel clients" tone="primary" icon={<Users className="w-6 h-6" />} />
+        <StatCard title="Projets" value={loading ? "…" : projects.length} subtitle="Chantiers & études" tone="secondary" icon={<FolderKanban className="w-6 h-6" />} />
+        <StatCard title="Conception IRVE" value="MVP" subtitle="Contexte → EVSE → Départs" tone="accent" icon={<Zap className="w-6 h-6" />} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
-        <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
-          <div className="card-body">
-            <div className="flex items-center justify-between">
-              <h2 className="card-title">Derniers projets</h2>
-              <a className="btn btn-sm btn-ghost" href="/app/projects">Voir tout</a>
-            </div>
+      <div className="mt-6">
+        {!loading && projects.length === 0 ? (
+          <EmptyState
+            title="Aucun projet"
+            subtitle="Crée un projet pour voir des statistiques et démarrer la conception électrique."
+            actionLabel="Créer un projet"
+            onAction={() => (window.location.href = "/app/projects")}
+          />
+        ) : (
+          <ProjectsCharts projects={projects} />
+        )}
+      </div>
 
-            <div className="overflow-x-auto mt-2">
-              <table className="table">
-                <thead>
-                  <tr><th>Nom</th><th>Statut</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {recentProjects.map(p => (
-                    <tr key={p.id}>
-                      <td className="font-medium">{p.name}</td>
-                      <td><span className="badge badge-outline">{p.status}</span></td>
-                      <td>
-                        <a className="btn btn-xs btn-primary" href={`/app/projects/${p.id}`}>Ouvrir</a>
-                      </td>
-                    </tr>
-                  ))}
-                  {!loading && recentProjects.length === 0 ? (
-                    <tr><td colSpan={3} className="opacity-60">Aucun projet</td></tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
+      <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft mt-6">
+        <div className="card-body">
+          <div className="flex items-center justify-between">
+            <h2 className="card-title">Derniers projets</h2>
+            <a className="btn btn-sm btn-ghost" href="/app/projects">Voir tout</a>
           </div>
-        </div>
 
-        <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
-          <div className="card-body">
-            <h2 className="card-title">Actions rapides</h2>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
-              <a className="btn btn-outline justify-between" href="/app/clients">
-                Ajouter un client <ArrowRight className="w-4 h-4" />
-              </a>
-              <a className="btn btn-outline justify-between" href="/app/projects">
-                Créer un projet <ArrowRight className="w-4 h-4" />
-              </a>
-              <a className="btn btn-outline justify-between md:col-span-2" href="/app/projects">
-                Aller vers “Conception électrique” <ArrowRight className="w-4 h-4" />
-              </a>
-            </div>
-
-            <div className="text-xs opacity-60 mt-3">
-              Prochaine étape: bouton Calculer + non-conformités + schéma unifilaire SVG.
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-3">
+            {loading ? (
+              Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="card bg-base-100/50 border border-base-300">
+                  <div className="card-body">
+                    <div className="skeleton h-5 w-3/4" />
+                    <div className="skeleton h-4 w-1/2 mt-2" />
+                    <div className="skeleton h-9 w-full mt-4" />
+                  </div>
+                </div>
+              ))
+            ) : (
+              recentProjects.map(p => (
+                <a key={p.id} className="card bg-base-100/50 border border-base-300 hover:-translate-y-0.5 transition-transform" href={`/app/projects/${p.id}`}>
+                  <div className="card-body">
+                    <div className="font-semibold">{p.name}</div>
+                    <div className="text-sm opacity-70">{p.status}</div>
+                    <div className="btn btn-sm btn-primary mt-3">Ouvrir</div>
+                  </div>
+                </a>
+              ))
+            )}
           </div>
         </div>
       </div>
