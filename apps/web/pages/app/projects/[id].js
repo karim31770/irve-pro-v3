@@ -3,7 +3,7 @@ import toast from "react-hot-toast";
 import AppShell from "../../../components/AppShell";
 import { apiFetch } from "../../../lib/api";
 import { storage } from "../../../lib/storage";
-import { Play, RefreshCw, AlertTriangle, ShieldAlert, CheckCircle2 } from "lucide-react";
+import { Play, RefreshCw, AlertTriangle, ShieldAlert, CheckCircle2, Sparkles, Sliders } from "lucide-react";
 
 function toNum(v, fallback = null) {
   if (v === "" || v == null) return fallback;
@@ -23,20 +23,43 @@ function sevIcon(sev) {
   return <CheckCircle2 className="w-4 h-4" />;
 }
 
+const PRESETS = {
+  HOME_FR: {
+    label: "Maison / appartement (France) — défaut",
+    earthingSystem: "TT",
+    supplyPhase: "MONO_230",
+    nominalVoltageV: 230,
+    prospectiveScIkA: 3000,           // valeur indicative “réaliste” (à confirmer)
+    ambientTempC: 30,
+    voltageDropLimitPercent: 3
+  },
+  SMALL_TERTIARY: {
+    label: "Petit tertiaire (indicatif)",
+    earthingSystem: "TN_S",
+    supplyPhase: "TRI_400",
+    nominalVoltageV: 400,
+    prospectiveScIkA: 6000,
+    ambientTempC: 30,
+    voltageDropLimitPercent: 3
+  }
+};
+
+function autoVoltageFromSupply(supplyPhase) {
+  return supplyPhase === "TRI_400" ? 400 : 230;
+}
+
 export default function ProjectDetail() {
   const [tab, setTab] = useState("elec");
   const [project, setProject] = useState(null);
 
-  const [ctx, setCtx] = useState(null);
-  const [ctxForm, setCtxForm] = useState({
-    earthingSystem: "TT",
-    supplyPhase: "MONO_230",
-    nominalVoltageV: 230,
-    prospectiveScIkA: "",
-    ambientTempC: 30,
-    voltageDropLimitPercent: 3
-  });
+  // Contexte
+  const [preset, setPreset] = useState("HOME_FR");
+  const [advanced, setAdvanced] = useState(false);
 
+  const [ctx, setCtx] = useState(null);
+  const [ctxForm, setCtxForm] = useState({ ...PRESETS.HOME_FR });
+
+  // EVSE
   const [evse, setEvse] = useState([]);
   const [evseForm, setEvseForm] = useState({
     name: "",
@@ -47,14 +70,16 @@ export default function ProjectDetail() {
     has6mADcDetection: false
   });
 
+  // Départs
   const [feeders, setFeeders] = useState([]);
   const [feederForm, setFeederForm] = useState({
     name: "",
     evseId: "",
-    lengthM: 0,
+    lengthM: 20,
     cableSectionMm2: ""
   });
 
+  // Calcul
   const [calc, setCalc] = useState(null);
   const [calcLoading, setCalcLoading] = useState(false);
 
@@ -63,6 +88,25 @@ export default function ProjectDetail() {
     const parts = window.location.pathname.split("/");
     return parts[parts.length - 1] || null;
   }, []);
+
+  function isContextRequiredOk() {
+    // Obligatoires : régime de neutre + mono/tri (+ tension auto)
+    return !!ctxForm.earthingSystem && !!ctxForm.supplyPhase;
+  }
+
+  function contextPayload() {
+    const uAuto = autoVoltageFromSupply(ctxForm.supplyPhase);
+    const u = advanced ? toNum(ctxForm.nominalVoltageV, uAuto) : uAuto;
+
+    return {
+      earthingSystem: ctxForm.earthingSystem,
+      supplyPhase: ctxForm.supplyPhase,
+      nominalVoltageV: u,
+      prospectiveScIkA: toNum(ctxForm.prospectiveScIkA, null),        // recommandé
+      ambientTempC: toNum(ctxForm.ambientTempC, 30),
+      voltageDropLimitPercent: toNum(ctxForm.voltageDropLimitPercent, 3)
+    };
+  }
 
   async function loadAll() {
     if (!projectId) return;
@@ -81,11 +125,13 @@ export default function ProjectDetail() {
     setCalc(latest);
 
     if (c) {
+      const supply = c.supply_phase ?? "MONO_230";
+      const autoU = autoVoltageFromSupply(supply);
       setCtxForm({
-        earthingSystem: c.earthing_system ?? "TT",
-        supplyPhase: c.supply_phase ?? "MONO_230",
-        nominalVoltageV: c.nominal_voltage_v ?? 230,
-        prospectiveScIkA: c.prospective_sc_ik_a ?? "",
+        earthingSystem: c.earthing_system ?? PRESETS.HOME_FR.earthingSystem,
+        supplyPhase: supply,
+        nominalVoltageV: c.nominal_voltage_v ?? autoU,
+        prospectiveScIkA: c.prospective_sc_ik_a ?? PRESETS.HOME_FR.prospectiveScIkA,
         ambientTempC: c.ambient_temp_c ?? 30,
         voltageDropLimitPercent: c.voltage_drop_limit_percent ?? 3
       });
@@ -97,18 +143,22 @@ export default function ProjectDetail() {
     loadAll().catch((e) => toast.error(e.message));
   }, [projectId]);
 
+  function applyPreset(key) {
+    const p = PRESETS[key] ?? PRESETS.HOME_FR;
+    setPreset(key);
+    setCtxForm({ ...p });
+    toast.success(`Profil appliqué : ${p.label}`);
+  }
+
   async function saveContext() {
     try {
+      if (!isContextRequiredOk()) {
+        toast.error("Champs obligatoires manquants : régime de neutre + mono/tri");
+        return;
+      }
       await apiFetch(`/projects/${projectId}/electrical-context`, {
         method: "PUT",
-        body: {
-          earthingSystem: ctxForm.earthingSystem,
-          supplyPhase: ctxForm.supplyPhase,
-          nominalVoltageV: toNum(ctxForm.nominalVoltageV, 230),
-          prospectiveScIkA: toNum(ctxForm.prospectiveScIkA, null),
-          ambientTempC: toNum(ctxForm.ambientTempC, 30),
-          voltageDropLimitPercent: toNum(ctxForm.voltageDropLimitPercent, 3)
-        }
+        body: contextPayload()
       });
       toast.success("Contexte enregistré");
       await loadAll();
@@ -159,7 +209,7 @@ export default function ProjectDetail() {
           cableSectionMm2: toNum(feederForm.cableSectionMm2, null)
         }
       });
-      setFeederForm({ name: "", evseId: "", lengthM: 0, cableSectionMm2: "" });
+      setFeederForm({ name: "", evseId: "", lengthM: 20, cableSectionMm2: "" });
       toast.success("Départ ajouté");
       await loadAll();
     } catch (e) {
@@ -189,6 +239,8 @@ export default function ProjectDetail() {
       setCalcLoading(false);
     }
   }
+
+  const autoU = autoVoltageFromSupply(ctxForm.supplyPhase);
 
   return (
     <AppShell title={project ? project.name : "Projet"}>
@@ -220,26 +272,54 @@ export default function ProjectDetail() {
           </div>
 
           <div className="tabs tabs-boxed mb-4">
-            <a className={`tab ${tab === "elec" ? "tab-active" : ""}`} onClick={() => setTab("elec")}>Conception électrique</a>
+            <a className={`tab ${tab === "elec" ? "tab-active" : ""}`} onClick={() => setTab("elec")}>Conception</a>
             <a className={`tab ${tab === "calc" ? "tab-active" : ""}`} onClick={() => setTab("calc")}>Calcul & conformité</a>
           </div>
 
           {tab === "elec" ? (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Contexte */}
+              {/* Contexte simplifié */}
               <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft lg:col-span-3">
                 <div className="card-body">
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 className="card-title">Contexte</h2>
-                    <button className="btn btn-primary" onClick={saveContext}>Enregistrer</button>
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                      <h2 className="card-title flex items-center gap-2">
+                        <Sparkles className="w-5 h-5" /> Contexte (simple)
+                      </h2>
+                      <div className="text-sm opacity-70 mt-1">
+                        Obligatoire : régime de neutre + mono/tri. Recommandé : Ik (pour Icu).
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button className="btn btn-outline" onClick={() => setAdvanced(!advanced)}>
+                        <Sliders className="w-4 h-4" /> {advanced ? "Masquer avancé" : "Avancé"}
+                      </button>
+                      <button className="btn btn-primary" onClick={saveContext} disabled={!isContextRequiredOk()}>
+                        Enregistrer
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
                     <label className="form-control">
-                      <div className="label"><span className="label-text">Régime de neutre</span></div>
-                      <select className="select select-bordered" value={ctxForm.earthingSystem}
-                        onChange={(e) => setCtxForm({ ...ctxForm, earthingSystem: e.target.value })}>
-                        <option value="TT">TT</option>
+                      <div className="label"><span className="label-text">Profil</span></div>
+                      <select className="select select-bordered" value={preset} onChange={(e) => applyPreset(e.target.value)}>
+                        {Object.entries(PRESETS).map(([k, v]) => (
+                          <option key={k} value={k}>{v.label}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="form-control">
+                      <div className="label">
+                        <span className="label-text">Régime de neutre <span className="badge badge-error badge-sm ml-2">Obligatoire</span></span>
+                      </div>
+                      <select
+                        className={`select select-bordered ${ctxForm.earthingSystem ? "" : "select-error"}`}
+                        value={ctxForm.earthingSystem}
+                        onChange={(e) => setCtxForm({ ...ctxForm, earthingSystem: e.target.value })}
+                      >
+                        <option value="TT">TT (très courant résidentiel)</option>
                         <option value="TN_S">TN-S</option>
                         <option value="TN_C">TN-C</option>
                         <option value="IT">IT</option>
@@ -247,41 +327,92 @@ export default function ProjectDetail() {
                     </label>
 
                     <label className="form-control">
-                      <div className="label"><span className="label-text">Alimentation</span></div>
-                      <select className="select select-bordered" value={ctxForm.supplyPhase}
-                        onChange={(e) => setCtxForm({ ...ctxForm, supplyPhase: e.target.value })}>
-                        <option value="MONO_230">Mono 230V</option>
+                      <div className="label">
+                        <span className="label-text">Alimentation <span className="badge badge-error badge-sm ml-2">Obligatoire</span></span>
+                      </div>
+                      <select
+                        className={`select select-bordered ${ctxForm.supplyPhase ? "" : "select-error"}`}
+                        value={ctxForm.supplyPhase}
+                        onChange={(e) => {
+                          const supplyPhase = e.target.value;
+                          const u = autoVoltageFromSupply(supplyPhase);
+                          setCtxForm({ ...ctxForm, supplyPhase, nominalVoltageV: u });
+                        }}
+                      >
+                        <option value="MONO_230">Mono 230V (ménage)</option>
                         <option value="TRI_400">Tri 400V</option>
                       </select>
                     </label>
-
-                    <label className="form-control">
-                      <div className="label"><span className="label-text">Tension nominale (V)</span></div>
-                      <input className="input input-bordered" value={ctxForm.nominalVoltageV}
-                        onChange={(e) => setCtxForm({ ...ctxForm, nominalVoltageV: e.target.value })} />
-                    </label>
-
-                    <label className="form-control">
-                      <div className="label"><span className="label-text">Ik présumé (A)</span></div>
-                      <input className="input input-bordered" value={ctxForm.prospectiveScIkA}
-                        onChange={(e) => setCtxForm({ ...ctxForm, prospectiveScIkA: e.target.value })} />
-                    </label>
-
-                    <label className="form-control">
-                      <div className="label"><span className="label-text">Température (°C)</span></div>
-                      <input className="input input-bordered" value={ctxForm.ambientTempC}
-                        onChange={(e) => setCtxForm({ ...ctxForm, ambientTempC: e.target.value })} />
-                    </label>
-
-                    <label className="form-control">
-                      <div className="label"><span className="label-text">Chute de tension max (%)</span></div>
-                      <input className="input input-bordered" value={ctxForm.voltageDropLimitPercent}
-                        onChange={(e) => setCtxForm({ ...ctxForm, voltageDropLimitPercent: e.target.value })} />
-                    </label>
                   </div>
 
-                  <div className="text-xs opacity-60 mt-3">
-                    Contexte enregistré : {ctx ? "oui" : "non"}.
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className="badge badge-outline">Tension auto : {autoU} V</span>
+                    <span className="badge badge-outline">ΔU max : {ctxForm.voltageDropLimitPercent}%</span>
+                    <span className="badge badge-outline">T° : {ctxForm.ambientTempC}°C</span>
+                    <span className="badge badge-outline">Ik : {ctxForm.prospectiveScIkA ? `${ctxForm.prospectiveScIkA} A` : "non renseigné"}</span>
+                  </div>
+
+                  <div className="mt-4">
+                    <div className="alert alert-warning bg-base-100/50 border border-base-300">
+                      <AlertTriangle className="w-5 h-5" />
+                      <div>
+                        <div className="font-semibold">Champs recommandés</div>
+                        <div className="text-sm opacity-80">
+                          Ik (A) améliore fortement la recommandation de pouvoir de coupure (Icu). Si tu ne sais pas, laisse la valeur par défaut ou mets-la à vide.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {advanced ? (
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <label className="form-control">
+                        <div className="label"><span className="label-text">Ik présumé (A) <span className="badge badge-warning badge-sm ml-2">Recommandé</span></span></div>
+                        <input
+                          className="input input-bordered"
+                          value={ctxForm.prospectiveScIkA}
+                          onChange={(e) => setCtxForm({ ...ctxForm, prospectiveScIkA: e.target.value })}
+                          placeholder="Ex: 3000"
+                        />
+                        <div className="label">
+                          <span className="label-text-alt opacity-70">Valeur indicative : à confirmer par mesure ou données amont.</span>
+                        </div>
+                      </label>
+
+                      <label className="form-control">
+                        <div className="label"><span className="label-text">Température (°C)</span></div>
+                        <input
+                          className="input input-bordered"
+                          value={ctxForm.ambientTempC}
+                          onChange={(e) => setCtxForm({ ...ctxForm, ambientTempC: e.target.value })}
+                        />
+                      </label>
+
+                      <label className="form-control">
+                        <div className="label"><span className="label-text">Chute de tension max (%)</span></div>
+                        <input
+                          className="input input-bordered"
+                          value={ctxForm.voltageDropLimitPercent}
+                          onChange={(e) => setCtxForm({ ...ctxForm, voltageDropLimitPercent: e.target.value })}
+                        />
+                      </label>
+
+                      <label className="form-control md:col-span-3">
+                        <div className="label"><span className="label-text">Tension nominale (override)</span></div>
+                        <input
+                          className="input input-bordered"
+                          value={ctxForm.nominalVoltageV}
+                          onChange={(e) => setCtxForm({ ...ctxForm, nominalVoltageV: e.target.value })}
+                        />
+                        <div className="label">
+                          <span className="label-text-alt opacity-70">En mode simple, la tension est fixée automatiquement selon mono/tri.</span>
+                        </div>
+                      </label>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 text-xs opacity-60">
+                    Defaults “ménage moyen” (profil Maison) : TT, mono 230V, Ik 3000A (indicatif), ΔU 3%, 30°C.
                   </div>
                 </div>
               </div>
@@ -356,10 +487,10 @@ export default function ProjectDetail() {
                   </select>
 
                   <div className="grid grid-cols-2 gap-2 mt-2">
-                    <input className="input input-bordered" placeholder="Longueur (m)"
-                      value={feederForm.lengthM} onChange={(e) => setFeederForm({ ...feederForm, lengthM: e.target.value })} />
-                    <input className="input input-bordered" placeholder="Section (mm²)"
-                      value={feederForm.cableSectionMm2} onChange={(e) => setFeederForm({ ...feederForm, cableSectionMm2: e.target.value })} />
+                    <input className="input input-bordered" placeholder="Longueur (m)" value={feederForm.lengthM}
+                      onChange={(e) => setFeederForm({ ...feederForm, lengthM: e.target.value })} />
+                    <input className="input input-bordered" placeholder="Section (mm²) (optionnel)" value={feederForm.cableSectionMm2}
+                      onChange={(e) => setFeederForm({ ...feederForm, cableSectionMm2: e.target.value })} />
                   </div>
 
                   <button className="btn btn-primary mt-3" disabled={feederForm.name.length < 2} onClick={addFeeder}>
@@ -387,7 +518,7 @@ export default function ProjectDetail() {
                   </div>
 
                   <div className="mt-3 text-xs opacity-60">
-                    Passe à l’onglet “Calcul & conformité” pour lancer le calcul automatique.
+                    Étape suivante : onglet “Calcul & conformité” → Calculer automatiquement.
                   </div>
                 </div>
               </div>
@@ -400,7 +531,7 @@ export default function ProjectDetail() {
                     <div>
                       <h2 className="card-title">Calcul automatique & conformité</h2>
                       <div className="text-sm opacity-70 mt-1">
-                        Lance le moteur: Ib, chute de tension, suggestions protections + non-conformités.
+                        Le calcul utilise le contexte enregistré. Si tu n’as pas renseigné Ik, l’Icu sera moins fiable.
                       </div>
                     </div>
 
@@ -414,6 +545,18 @@ export default function ProjectDetail() {
                       </button>
                     </div>
                   </div>
+
+                  {!ctx ? (
+                    <div className="alert alert-warning bg-base-100/50 border border-base-300 mt-4">
+                      <AlertTriangle className="w-5 h-5" />
+                      <div>
+                        <div className="font-semibold">Contexte non enregistré</div>
+                        <div className="text-sm opacity-80">
+                          Clique “Enregistrer” dans l’onglet Conception. Sinon le moteur utilisera des valeurs par défaut (moins fiable).
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
 
                   {calc ? (
                     <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -436,13 +579,12 @@ export default function ProjectDetail() {
                     </div>
                   ) : (
                     <div className="mt-4 text-sm opacity-70">
-                      Aucun calcul enregistré pour ce projet. Clique “Calculer automatiquement”.
+                      Aucun calcul enregistré. Clique “Calculer automatiquement”.
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Non-conformités */}
               <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
                 <div className="card-body">
                   <h3 className="card-title">Non-conformités</h3>
@@ -469,7 +611,6 @@ export default function ProjectDetail() {
                 </div>
               </div>
 
-              {/* Résultats par départ */}
               <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
                 <div className="card-body">
                   <h3 className="card-title">Résultats par départ</h3>
@@ -509,7 +650,7 @@ export default function ProjectDetail() {
                   </div>
 
                   <div className="mt-3 text-xs opacity-60">
-                    Note : ce moteur est un MVP (assistant). Pour une conformité NF C 15-100 complète, on intégrera abaques/licences + rulesets versionnés.
+                    Les valeurs “profil Maison” sont des defaults réalistes pour démarrer. Pour conformité finale, renseigner/valider Ik et paramètres chantier.
                   </div>
                 </div>
               </div>
