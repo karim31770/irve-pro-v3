@@ -3,6 +3,7 @@ import toast from "react-hot-toast";
 import AppShell from "../../../components/AppShell";
 import { apiFetch } from "../../../lib/api";
 import { storage } from "../../../lib/storage";
+import { Play, RefreshCw, AlertTriangle, ShieldAlert, CheckCircle2 } from "lucide-react";
 
 function toNum(v, fallback = null) {
   if (v === "" || v == null) return fallback;
@@ -10,8 +11,20 @@ function toNum(v, fallback = null) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function sevBadge(sev) {
+  if (sev === "BLOCK") return "badge-error";
+  if (sev === "WARN") return "badge-warning";
+  return "badge-ghost";
+}
+
+function sevIcon(sev) {
+  if (sev === "BLOCK") return <ShieldAlert className="w-4 h-4" />;
+  if (sev === "WARN") return <AlertTriangle className="w-4 h-4" />;
+  return <CheckCircle2 className="w-4 h-4" />;
+}
+
 export default function ProjectDetail() {
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState("elec");
   const [project, setProject] = useState(null);
 
   const [ctx, setCtx] = useState(null);
@@ -31,9 +44,7 @@ export default function ProjectDetail() {
     phase: "MONO",
     maxPowerKw: 7.4,
     maxCurrentA: "",
-    has6mADcDetection: false,
-    manufacturer: "",
-    model: ""
+    has6mADcDetection: false
   });
 
   const [feeders, setFeeders] = useState([]);
@@ -44,6 +55,9 @@ export default function ProjectDetail() {
     cableSectionMm2: ""
   });
 
+  const [calc, setCalc] = useState(null);
+  const [calcLoading, setCalcLoading] = useState(false);
+
   const projectId = useMemo(() => {
     if (typeof window === "undefined") return null;
     const parts = window.location.pathname.split("/");
@@ -52,17 +66,19 @@ export default function ProjectDetail() {
 
   async function loadAll() {
     if (!projectId) return;
-    const [p, c, e, f] = await Promise.all([
+    const [p, c, e, f, latest] = await Promise.all([
       apiFetch(`/projects/${projectId}`),
       apiFetch(`/projects/${projectId}/electrical-context`),
       apiFetch(`/projects/${projectId}/evse`),
-      apiFetch(`/projects/${projectId}/feeders`)
+      apiFetch(`/projects/${projectId}/feeders`),
+      apiFetch(`/projects/${projectId}/calculations/latest`).catch(() => null)
     ]);
 
     setProject(p);
     setCtx(c);
     setEvse(e);
     setFeeders(f);
+    setCalc(latest);
 
     if (c) {
       setCtxForm({
@@ -111,15 +127,10 @@ export default function ProjectDetail() {
           phase: evseForm.phase,
           maxPowerKw: toNum(evseForm.maxPowerKw, 7.4),
           maxCurrentA: toNum(evseForm.maxCurrentA, null),
-          has6mADcDetection: !!evseForm.has6mADcDetection,
-          manufacturer: evseForm.manufacturer || null,
-          model: evseForm.model || null
+          has6mADcDetection: !!evseForm.has6mADcDetection
         }
       });
-      setEvseForm({
-        name: "", evseType: "AC", phase: "MONO", maxPowerKw: 7.4, maxCurrentA: "",
-        has6mADcDetection: false, manufacturer: "", model: ""
-      });
+      setEvseForm({ name: "", evseType: "AC", phase: "MONO", maxPowerKw: 7.4, maxCurrentA: "", has6mADcDetection: false });
       toast.success("EVSE ajoutée");
       await loadAll();
     } catch (e) {
@@ -166,51 +177,57 @@ export default function ProjectDetail() {
     }
   }
 
+  async function runCalc() {
+    try {
+      setCalcLoading(true);
+      const res = await apiFetch(`/projects/${projectId}/calculations/run`, { method: "POST" });
+      setCalc(res);
+      toast.success("Calcul terminé");
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setCalcLoading(false);
+    }
+  }
+
   return (
     <AppShell title={project ? project.name : "Projet"}>
       {!project ? (
-        <div className="card bg-base-100 shadow">
+        <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
           <div className="card-body">
-            <div className="skeleton h-10 w-2/3" />
+            <div className="skeleton h-8 w-2/3" />
             <div className="skeleton h-5 w-1/3 mt-2" />
-            <div className="skeleton h-24 w-full mt-4" />
+            <div className="skeleton h-28 w-full mt-5" />
           </div>
         </div>
       ) : (
         <>
-          <div className="card bg-base-100 shadow mb-4">
+          <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft mb-4">
             <div className="card-body">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
+                  <div className="text-sm opacity-70">Projet</div>
                   <h1 className="text-2xl font-semibold">{project.name}</h1>
                   <div className="mt-2">
                     <span className="badge badge-outline">{project.status}</span>
                   </div>
                 </div>
                 <button className="btn btn-ghost" onClick={() => loadAll().catch(e => toast.error(e.message))}>
-                  Rafraîchir
+                  <RefreshCw className="w-4 h-4" /> Rafraîchir
                 </button>
               </div>
             </div>
           </div>
 
           <div className="tabs tabs-boxed mb-4">
-            <a className={`tab ${tab === "overview" ? "tab-active" : ""}`} onClick={() => setTab("overview")}>Aperçu</a>
             <a className={`tab ${tab === "elec" ? "tab-active" : ""}`} onClick={() => setTab("elec")}>Conception électrique</a>
+            <a className={`tab ${tab === "calc" ? "tab-active" : ""}`} onClick={() => setTab("calc")}>Calcul & conformité</a>
           </div>
 
-          {tab === "overview" ? (
-            <div className="card bg-base-100 shadow">
-              <div className="card-body">
-                <div className="opacity-70">
-                  Ici on ajoutera bientôt : client/site, documents, statut chantier, export dossier.
-                </div>
-              </div>
-            </div>
-          ) : (
+          {tab === "elec" ? (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* Contexte */}
-              <div className="card bg-base-100 shadow lg:col-span-3">
+              <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft lg:col-span-3">
                 <div className="card-body">
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="card-title">Contexte</h2>
@@ -270,7 +287,7 @@ export default function ProjectDetail() {
               </div>
 
               {/* EVSE */}
-              <div className="card bg-base-100 shadow lg:col-span-2">
+              <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft lg:col-span-2">
                 <div className="card-body">
                   <h2 className="card-title">EVSE</h2>
 
@@ -298,13 +315,6 @@ export default function ProjectDetail() {
                     <span className="label-text">Détection DC 6 mA intégrée</span>
                   </label>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
-                    <input className="input input-bordered" placeholder="Fabricant (optionnel)"
-                      value={evseForm.manufacturer} onChange={(e) => setEvseForm({ ...evseForm, manufacturer: e.target.value })} />
-                    <input className="input input-bordered" placeholder="Modèle (optionnel)"
-                      value={evseForm.model} onChange={(e) => setEvseForm({ ...evseForm, model: e.target.value })} />
-                  </div>
-
                   <div className="mt-3">
                     <button className="btn btn-primary" disabled={evseForm.name.length < 2} onClick={addEvse}>Ajouter EVSE</button>
                   </div>
@@ -321,9 +331,7 @@ export default function ProjectDetail() {
                             <td>{x.phase}</td>
                             <td>{x.max_power_kw}</td>
                             <td>{x.has_6ma_dc_detection ? "Oui" : "Non"}</td>
-                            <td>
-                              <button className="btn btn-sm btn-ghost" onClick={() => deleteEvse(x.id)}>Supprimer</button>
-                            </td>
+                            <td><button className="btn btn-sm btn-ghost" onClick={() => deleteEvse(x.id)}>Supprimer</button></td>
                           </tr>
                         ))}
                         {evse.length === 0 ? <tr><td colSpan={5} className="opacity-60">Aucune EVSE</td></tr> : null}
@@ -334,7 +342,7 @@ export default function ProjectDetail() {
               </div>
 
               {/* Départs */}
-              <div className="card bg-base-100 shadow">
+              <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
                 <div className="card-body">
                   <h2 className="card-title">Départs</h2>
 
@@ -370,9 +378,7 @@ export default function ProjectDetail() {
                             <td className="text-sm opacity-70">{f.evse_name || "-"}</td>
                             <td>{f.length_m}</td>
                             <td>{f.cable_section_mm2 ?? "-"}</td>
-                            <td>
-                              <button className="btn btn-sm btn-ghost" onClick={() => deleteFeeder(f.id)}>Supprimer</button>
-                            </td>
+                            <td><button className="btn btn-sm btn-ghost" onClick={() => deleteFeeder(f.id)}>Supprimer</button></td>
                           </tr>
                         ))}
                         {feeders.length === 0 ? <tr><td colSpan={5} className="opacity-60">Aucun départ</td></tr> : null}
@@ -381,7 +387,129 @@ export default function ProjectDetail() {
                   </div>
 
                   <div className="mt-3 text-xs opacity-60">
-                    Prochaine étape: bouton “Calculer” + non-conformités + schéma unifilaire SVG.
+                    Passe à l’onglet “Calcul & conformité” pour lancer le calcul automatique.
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
+                <div className="card-body">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                      <h2 className="card-title">Calcul automatique & conformité</h2>
+                      <div className="text-sm opacity-70 mt-1">
+                        Lance le moteur: Ib, chute de tension, suggestions protections + non-conformités.
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button className={`btn btn-primary ${calcLoading ? "btn-disabled" : ""}`} onClick={runCalc}>
+                        <Play className="w-4 h-4" />
+                        {calcLoading ? "Calcul..." : "Calculer automatiquement"}
+                      </button>
+                      <button className="btn btn-ghost" onClick={() => loadAll().catch(e => toast.error(e.message))}>
+                        <RefreshCw className="w-4 h-4" /> Recharger
+                      </button>
+                    </div>
+                  </div>
+
+                  {calc ? (
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+                      <div className="stat bg-base-100/50 border border-base-300 rounded-2xl">
+                        <div className="stat-title">Départs</div>
+                        <div className="stat-value text-2xl">{calc.summary?.feeders ?? "-"}</div>
+                      </div>
+                      <div className="stat bg-base-100/50 border border-base-300 rounded-2xl">
+                        <div className="stat-title">EVSE</div>
+                        <div className="stat-value text-2xl">{calc.summary?.evse ?? "-"}</div>
+                      </div>
+                      <div className="stat bg-base-100/50 border border-base-300 rounded-2xl">
+                        <div className="stat-title">WARN</div>
+                        <div className="stat-value text-2xl text-warning">{calc.summary?.warns ?? 0}</div>
+                      </div>
+                      <div className="stat bg-base-100/50 border border-base-300 rounded-2xl">
+                        <div className="stat-title">BLOCK</div>
+                        <div className="stat-value text-2xl text-error">{calc.summary?.blocks ?? 0}</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-4 text-sm opacity-70">
+                      Aucun calcul enregistré pour ce projet. Clique “Calculer automatiquement”.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Non-conformités */}
+              <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
+                <div className="card-body">
+                  <h3 className="card-title">Non-conformités</h3>
+
+                  <div className="mt-2 grid grid-cols-1 gap-2">
+                    {(calc?.nonConformities || []).length === 0 ? (
+                      <div className="opacity-70">Aucune non-conformité enregistrée.</div>
+                    ) : (
+                      calc.nonConformities.map((n, idx) => (
+                        <div key={idx} className="flex items-start gap-3 p-3 rounded-2xl border border-base-300 bg-base-100/50">
+                          <div className={`badge ${sevBadge(n.severity)} gap-2`}>
+                            {sevIcon(n.severity)} {n.severity}
+                          </div>
+                          <div className="flex-1">
+                            <div className="font-medium">{n.message}</div>
+                            <div className="text-xs opacity-70 mt-1">
+                              {n.code}{n.standard_ref ? ` • ${n.standard_ref}` : ""}{n.clause_ref ? ` • ${n.clause_ref}` : ""}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Résultats par départ */}
+              <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
+                <div className="card-body">
+                  <h3 className="card-title">Résultats par départ</h3>
+
+                  <div className="overflow-x-auto mt-2">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Départ</th>
+                          <th>EVSE</th>
+                          <th>Ib (A)</th>
+                          <th>ΔU %</th>
+                          <th>Câble (mm²)</th>
+                          <th>Disj (In)</th>
+                          <th>Icu (kA)</th>
+                          <th>DDR</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(calc?.items || []).map((it) => (
+                          <tr key={it.feeder_id}>
+                            <td className="font-medium">{it.feeder_name}</td>
+                            <td className="opacity-70 text-sm">{it.evse_name || "-"}</td>
+                            <td>{it.ib_a != null ? it.ib_a.toFixed(1) : "-"}</td>
+                            <td>{it.vdrop_percent != null ? it.vdrop_percent.toFixed(2) : "-"}</td>
+                            <td>{it.cable_section_mm2 ?? "-"}</td>
+                            <td>{it.breaker_in_a ? `${it.breaker_in_a}A` : "-"}</td>
+                            <td>{it.breaker_icu_ka != null ? it.breaker_icu_ka : "-"}</td>
+                            <td>{it.rcd_type ? `${it.rcd_type} / ${it.rcd_sensitivity_ma}mA` : "-"}</td>
+                          </tr>
+                        ))}
+                        {(calc?.items || []).length === 0 ? (
+                          <tr><td colSpan={8} className="opacity-70">Aucun départ à calculer.</td></tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-3 text-xs opacity-60">
+                    Note : ce moteur est un MVP (assistant). Pour une conformité NF C 15-100 complète, on intégrera abaques/licences + rulesets versionnés.
                   </div>
                 </div>
               </div>
