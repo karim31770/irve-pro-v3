@@ -36,7 +36,7 @@ async function withTenantContext(req, handler) {
     await setTenant(db, tenantId);
 
     const m = await db.query(
-      "select role from membership where p.tenant_id = $1 and user_id = $2",
+      "select role from membership where tenant_id = $1 and user_id = $2",
       [tenantId, userId]
     );
     if (m.rowCount === 0) throw httpError(403, "Forbidden (no membership for tenant)");
@@ -149,6 +149,7 @@ app.post("/auth/login", async (req, reply) => {
 // CLIENTS
 // -----------------------------
 
+
 app.post("/clients", async (req, reply) => {
   const body = req.body ?? {};
   const name = body.name;
@@ -186,6 +187,8 @@ app.post("/clients", async (req, reply) => {
 
 
 
+
+
 app.get("/clients", async (req, reply) => {
   const out = await withTenantContext(req, async (db) => {
     const r = await db.query(
@@ -196,6 +199,7 @@ app.get("/clients", async (req, reply) => {
   });
   return reply.send(out);
 });
+
 
 
 // -----------------------------
@@ -241,7 +245,7 @@ app.get("/sites", async (req, reply) => {
     const r = await db.query(
       `select id, client_id, name, address_line1, postal_code, city, country, created_at
        from site
-       where p.tenant_id = $1
+       where tenant_id = $1
        order by created_at desc
        limit 200`,
       [req.tenant.id]
@@ -274,6 +278,7 @@ app.post("/projects", async (req, reply) => {
 });
 
 
+
 app.get("/projects", async (req, reply) => {
   const out = await withTenantContext(req, async (db) => {
     const r = await db.query(
@@ -289,6 +294,7 @@ app.get("/projects", async (req, reply) => {
   });
   return reply.send(out);
 });
+
 
 
 app.get("/projects/:projectId", async (req, reply) => {
@@ -313,7 +319,7 @@ app.get("/projects/:projectId/electrical-context", async (req, reply) => {
     const r = await db.query(
       `select id, earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent, available_power_kw
        from electrical_context
-       where p.tenant_id = $1 and project_id = $2`,
+       where tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
     return r.rows[0] ?? null;
@@ -374,7 +380,7 @@ app.get("/projects/:projectId/evse", async (req, reply) => {
     const r = await db.query(
       `select id, name, evse_type, phase, max_power_kw, max_current_a, has_6ma_dc_detection, manufacturer, model, created_at
        from evse
-       where p.tenant_id = $1 and project_id = $2
+       where tenant_id = $1 and project_id = $2
        order by created_at desc`,
       [req.tenant.id, projectId]
     );
@@ -441,7 +447,7 @@ app.delete("/projects/:projectId/evse/:evseId", async (req, reply) => {
     await requireProject(db, req.tenant.id, projectId);
 
     const r = await db.query(
-      "delete from evse where p.tenant_id = $1 and project_id = $2 and id = $3 returning id",
+      "delete from evse where tenant_id = $1 and project_id = $2 and id = $3 returning id",
       [req.tenant.id, projectId, evseId]
     );
     if (r.rowCount === 0) throw httpError(404, "EVSE not found");
@@ -514,7 +520,7 @@ app.delete("/projects/:projectId/feeders/:feederId", async (req, reply) => {
     await requireProject(db, req.tenant.id, projectId);
 
     const r = await db.query(
-      "delete from feeder where p.tenant_id = $1 and project_id = $2 and id = $3 returning id",
+      "delete from feeder where tenant_id = $1 and project_id = $2 and id = $3 returning id",
       [req.tenant.id, projectId, feederId]
     );
     if (r.rowCount === 0) throw httpError(404, "Feeder not found");
@@ -539,21 +545,21 @@ app.post("/projects/:projectId/calculations/run", async (req, reply) => {
     const ctx = await db.query(
       `select earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent, available_power_kw
        from electrical_context
-       where p.tenant_id = $1 and project_id = $2`,
+       where tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
 
     const evse = await db.query(
       `select id, name, evse_type, phase, max_power_kw, max_current_a, has_6ma_dc_detection
        from evse
-       where p.tenant_id = $1 and project_id = $2`,
+       where tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
 
     const feeders = await db.query(
       `select id, name, evse_id, length_m, cable_section_mm2
        from feeder
-       where p.tenant_id = $1 and project_id = $2`,
+       where tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
 
@@ -635,7 +641,7 @@ app.get("/projects/:projectId/calculations/latest", async (req, reply) => {
     const r = await db.query(
       `select id, ruleset_name, ruleset_version, outputs_json, created_at
        from calculation_run
-       where p.tenant_id = $1 and project_id = $2
+       where tenant_id = $1 and project_id = $2
        order by created_at desc
        limit 1`,
       [req.tenant.id, projectId]
