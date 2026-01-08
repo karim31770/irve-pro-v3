@@ -1,3 +1,4 @@
+import { runIrveCalculation } from "./calc_irve.js";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { withTx, setTenant, isUuid } from "./db.js";
@@ -479,6 +480,115 @@ app.delete("/projects/:projectId/feeders/:feederId", async (req, reply) => {
     );
     if (r.rowCount === 0) throw httpError(404, "Feeder not found");
     return { ok: true };
+  });
+
+  return reply.send(out);
+});
+
+
+// -----------------------------
+// CALCULATIONS (IRVE MVP)
+// -----------------------------
+app.post("/projects/:projectId/calculations/run", async (req, reply) => {
+  const projectId = req.params?.projectId;
+  if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
+
+  const out = await withTenantContext(req, async (db) => {
+    requireRole(req, ["ADMIN", "MANAGER"]);
+    await requireProject(db, req.tenant.id, projectId);
+
+    const ctx = await db.query(
+      `select earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent
+       from electrical_context
+       where tenant_id = $1 and project_id = $2`,
+      [req.tenant.id, projectId]
+    );
+
+    const evse = await db.query(
+      `select id, name, evse_type, phase, max_power_kw, max_current_a, has_6ma_dc_detection
+       from evse
+       where tenant_id = $1 and project_id = $2`,
+      [req.tenant.id, projectId]
+    );
+
+    const feeders = await db.query(
+      `select id, name, evse_id, length_m, cable_section_mm2
+       from feeder
+       where tenant_id = $1 and project_id = $2`,
+      [req.tenant.id, projectId]
+    );
+
+    const calc = runIrveCalculation({
+      context: ctx.rows[0] ?? null,
+      evseList: evse.rows,
+      feederList: feeders.rows
+    });
+
+    const inputs = { context: ctx.rows[0] ?? null, evse: evse.rows, feeders: feeders.rows };
+    const outputs = { ...calc };
+
+    const run = await db.query(
+      `insert into calculation_run(tenant_id, project_id, ruleset_name, ruleset_version, inputs_json, outputs_json, created_by)
+       values ($1,$2,$3,$4,$5,$6,$7)
+       returning id, created_at`,
+      [req.tenant.id, projectId, calc.ruleset.name, calc.ruleset.version, inputs, outputs, req.user.id]
+    );
+
+    for (const n of calc.nonConformities) {
+      await db.query(
+        `insert into non_conformity(tenant_id, run_id, severity, code, standard_ref, clause_ref, message, meta)
+         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          req.tenant.id,
+          run.rows[0].id,
+          n.severity,
+          n.code,
+          n.standard_ref,
+          n.clause_ref,
+          n.message,
+          n.meta ?? {}
+        ]
+      );
+    }
+
+    return { run_id: run.rows[0].id, created_at: run.rows[0].created_at, ...calc };
+  });
+
+  return reply.send(out);
+});
+
+app.get("/projects/:projectId/calculations/latest", async (req, reply) => {
+  const projectId = req.params?.projectId;
+  if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
+
+  const out = await withTenantContext(req, async (db) => {
+    await requireProject(db, req.tenant.id, projectId);
+
+    const r = await db.query(
+      `select id, ruleset_name, ruleset_version, outputs_json, created_at
+       from calculation_run
+       where tenant_id = $1 and project_id = $2
+       order by created_at desc
+       limit 1`,
+      [req.tenant.id, projectId]
+    );
+    if (r.rowCount === 0) return null;
+
+    const nc = await db.query(
+      `select severity, code, standard_ref, clause_ref, message, meta
+       from non_conformity
+       where run_id = $1
+       order by created_at asc`,
+      [r.rows[0].id]
+    );
+
+    return {
+      run_id: r.rows[0].id,
+      ruleset: { name: r.rows[0].ruleset_name, version: r.rows[0].ruleset_version },
+      created_at: r.rows[0].created_at,
+      ...r.rows[0].outputs_json,
+      nonConformities: nc.rows
+    };
   });
 
   return reply.send(out);
