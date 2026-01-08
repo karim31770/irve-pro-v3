@@ -1,4 +1,5 @@
 import { runIrveCalculation } from "./calc_irve.js";
+import { runProjectWizard } from "./wizard_irve.js";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { withTx, setTenant, isUuid } from "./db.js";
@@ -745,6 +746,21 @@ app.put("/clients/:clientId", async (req, reply) => {
   });
 
   return reply.send(out);
+});
+
+
+// -----------------------------
+// PROJECT WIZARD (fast IRVE)
+// -----------------------------
+app.post("/projects/wizard", async (req, reply) => {
+  const body = req.body ?? {};
+
+  const out = await withTenantContext(req, async (db) => {
+    requireRole(req, ["ADMIN", "MANAGER"]);
+    return runProjectWizard(db, { tenantId: req.tenant.id, userId: req.user.id, payload: body });
+  });
+
+  return reply.code(201).send(out);
 });
 
 const port = Number(process.env.PORT ?? 4010);
