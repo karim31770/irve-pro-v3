@@ -1,17 +1,23 @@
 import { storage } from "./storage";
 
-export async function apiFetch(path, { method = "GET", body } = {}) {
+export async function apiFetch(path, { method = "GET", body, headers: extraHeaders } = {}) {
   const token = storage.getToken();
   const tenantId = storage.getTenantId();
 
+  const headers = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(tenantId ? { "X-Tenant-Id": tenantId } : {}),
+    ...(extraHeaders || {})
+  };
+
+  // Important: Content-Type uniquement si body JSON
+  const hasBody = body !== undefined && body !== null;
+  if (hasBody) headers["Content-Type"] = "application/json";
+
   const res = await fetch(`/api${path}`, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(tenantId ? { "X-Tenant-Id": tenantId } : {})
-    },
-    body: body ? JSON.stringify(body) : undefined
+    headers,
+    body: hasBody ? JSON.stringify(body) : undefined
   });
 
   const text = await res.text();
