@@ -64,7 +64,7 @@ export default function Projects() {
         </div>
 
         <div className="flex gap-2">
-          <button className="btn btn-primary" onClick={() => document.getElementById("new_project_modal").showModal()}>
+          <button className="btn btn-primary" onClick={() => window.location.href="/app/projects/new"}>
             <Plus className="w-4 h-4" /> Nouveau
           </button>
           <button className="btn btn-ghost" onClick={() => reload().catch(e => toast.error(e.message))}>
@@ -104,7 +104,7 @@ export default function Projects() {
           title="Aucun projet"
           subtitle="Crée un projet lié à un client."
           actionLabel="Créer un projet"
-          onAction={() => document.getElementById("new_project_modal").showModal()}
+          onAction={() => window.location.href="/app/projects/new"}
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
