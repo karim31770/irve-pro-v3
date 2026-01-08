@@ -258,24 +258,33 @@ app.get("/sites", async (req, reply) => {
 // -----------------------------
 // PROJECTS
 // -----------------------------
+
 app.post("/projects", async (req, reply) => {
   const body = req.body ?? {};
   const name = body.name;
+  const clientId = body.clientId ?? null;
+
   if (typeof name !== "string" || name.length < 2) return reply.code(400).send({ error: "name invalid" });
+  if (!clientId || (typeof clientId !== "string") || !isUuid(clientId)) {
+    return reply.code(400).send({ error: "clientId required" });
+  }
 
   const out = await withTenantContext(req, async (db) => {
     requireRole(req, ["ADMIN", "MANAGER"]);
+
     const r = await db.query(
       `insert into project(tenant_id, client_id, name, status)
        values ($1, $2, $3, $4)
-       returning id, name, status, created_at`,
+       returning id, client_id, name, status, created_at`,
       [req.tenant.id, clientId, name, "DRAFT"]
     );
+
     return r.rows[0];
   });
 
   return reply.code(201).send(out);
 });
+
 
 
 
