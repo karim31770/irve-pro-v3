@@ -182,7 +182,7 @@ export async function runProjectWizard(db, { tenantId, userId, payload }) {
     `insert into feeder(tenant_id, project_id, name, evse_id, length_m, install_method, cable_type, conductors, cable_section_mm2, cable_section_source)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      returning id, name, evse_id, length_m, cable_section_mm2`,
-    [tenantId, project.id, feederName, evseRow.id, lengthM, installMethod, cableType, conductors, null, null]  # placeholders handled by pg (null)
+    [tenantId, project.id, feederName, evseRow.id, lengthM, installMethod, cableType, conductors, null, null]
   );
   const feederRow = feederRes.rows[0];
 
