@@ -3,10 +3,13 @@ import toast from "react-hot-toast";
 import AppShell from "../../components/AppShell";
 import { apiFetch } from "../../lib/api";
 import { storage } from "../../lib/storage";
+import { Plus, RefreshCw } from "lucide-react";
 
 export default function Clients() {
   const [items, setItems] = useState([]);
-  const [name, setName] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const [newName, setNewName] = useState("");
 
   async function reload() {
     const data = await apiFetch("/clients");
@@ -15,13 +18,17 @@ export default function Clients() {
 
   useEffect(() => {
     if (!storage.getToken()) { window.location.href = "/login"; return; }
-    reload().catch(e => toast.error(e.message));
+    (async () => {
+      try { setLoading(true); await reload(); }
+      catch (e) { toast.error(e.message); }
+      finally { setLoading(false); }
+    })();
   }, []);
 
-  async function create() {
+  async function createClient() {
     try {
-      await apiFetch("/clients", { method: "POST", body: { name } });
-      setName("");
+      await apiFetch("/clients", { method: "POST", body: { name: newName } });
+      setNewName("");
       toast.success("Client créé");
       await reload();
     } catch (e) {
@@ -31,30 +38,48 @@ export default function Clients() {
 
   return (
     <AppShell title="Clients">
-      <div className="card bg-base-100 shadow">
+      <div className="flex items-end justify-between gap-3 mb-4">
+        <div>
+          <div className="text-2xl font-semibold">Clients</div>
+          <div className="opacity-70">Renseigne les coordonnées pour les futurs installateurs.</div>
+        </div>
+        <button className="btn btn-ghost" onClick={() => reload().catch(e => toast.error(e.message))}>
+          <RefreshCw className="w-4 h-4" /> Rafraîchir
+        </button>
+      </div>
+
+      <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft mb-4">
         <div className="card-body">
-          <div className="flex flex-col md:flex-row md:items-end gap-3">
-            <label className="form-control w-full max-w-md">
-              <div className="label"><span className="label-text">Nouveau client</span></div>
-              <input className="input input-bordered" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Vinci, Carrefour..." />
+          <div className="flex flex-col md:flex-row gap-2">
+            <label className="input input-bordered flex items-center gap-2 flex-1">
+              <Plus className="w-4 h-4 opacity-70" />
+              <input className="grow" placeholder="Nom du client (obligatoire)" value={newName} onChange={(e) => setNewName(e.target.value)} />
             </label>
-            <button className="btn btn-primary" disabled={name.length < 2} onClick={create}>Créer</button>
-            <button className="btn btn-ghost" onClick={() => reload().catch(e => toast.error(e.message))}>Rafraîchir</button>
+            <button className="btn btn-primary" disabled={newName.trim().length < 2} onClick={createClient}>
+              Créer
+            </button>
           </div>
+        </div>
+      </div>
 
-          <div className="divider" />
-
+      <div className="card bg-base-100/70 backdrop-blur border border-base-300 shadow-soft">
+        <div className="card-body">
           <div className="overflow-x-auto">
-            <table className="table table-zebra">
-              <thead><tr><th>Nom</th><th>Créé le</th></tr></thead>
+            <table className="table">
+              <thead><tr><th>Nom</th><th>Créé le</th><th></th></tr></thead>
               <tbody>
-                {items.map(c => (
+                {loading ? (
+                  <tr><td colSpan={3} className="opacity-70">Chargement…</td></tr>
+                ) : items.map(c => (
                   <tr key={c.id}>
                     <td className="font-medium">{c.name}</td>
-                    <td className="text-sm opacity-70">{new Date(c.created_at).toLocaleString()}</td>
+                    <td className="opacity-70 text-sm">{new Date(c.created_at).toLocaleString()}</td>
+                    <td><a className="btn btn-sm btn-primary" href={`/app/clients/${c.id}`}>Ouvrir</a></td>
                   </tr>
                 ))}
-                {items.length === 0 ? <tr><td colSpan={2} className="opacity-60">Aucun client</td></tr> : null}
+                {!loading && items.length === 0 ? (
+                  <tr><td colSpan={3} className="opacity-70">Aucun client</td></tr>
+                ) : null}
               </tbody>
             </table>
           </div>
