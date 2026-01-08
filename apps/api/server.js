@@ -543,6 +543,7 @@ app.delete("/projects/:projectId/feeders/:feederId", async (req, reply) => {
 // -----------------------------
 // CALCULATIONS (IRVE MVP)
 // -----------------------------
+
 app.post("/projects/:projectId/calculations/run", async (req, reply) => {
   const projectId = req.params?.projectId;
   if (!isUuid(projectId)) return reply.code(400).send({ error: "invalid projectId" });
@@ -551,29 +552,29 @@ app.post("/projects/:projectId/calculations/run", async (req, reply) => {
     requireRole(req, ["ADMIN", "MANAGER"]);
     await requireProject(db, req.tenant.id, projectId);
 
-    const ctx = await db.query(
+    const ctxRes = await db.query(
       `select earthing_system, supply_phase, nominal_voltage_v, prospective_sc_ik_a, ambient_temp_c, voltage_drop_limit_percent, available_power_kw
        from electrical_context
        where tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
 
-    const evse = await db.query(
+    const evseRes = await db.query(
       `select id, name, evse_type, phase, max_power_kw, max_current_a, has_6ma_dc_detection
        from evse
        where tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
 
-    const feeders = await db.query(
+    const feedersRes = await db.query(
       `select id, name, evse_id, length_m, cable_section_mm2
        from feeder
        where tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]
     );
 
-    let ctxRow = ctx.rows[0] ?? null;
-    let ctxDefaultUsed = false;
+    let ctxRow = ctxRes.rows[0] ?? null;
+    let ctxDefaultUsed = false; // js-friendly below
     if (!ctxRow) {
       ctxDefaultUsed = true;
       ctxRow = {
@@ -582,14 +583,15 @@ app.post("/projects/:projectId/calculations/run", async (req, reply) => {
         nominal_voltage_v: 230,
         prospective_sc_ik_a: 3000,
         ambient_temp_c: 30,
-        voltage_drop_limit_percent: 3
+        voltage_drop_limit_percent: 3,
+        available_power_kw: 9
       };
     }
 
     const calc = runIrveCalculation({
       context: ctxRow,
-      evseList: evse.rows,
-      feederList: feeders.rows
+      evseList: evseRes.rows,
+      feederList: feedersRes.rows
     });
 
     if (ctxDefaultUsed) {
@@ -607,38 +609,41 @@ app.post("/projects/:projectId/calculations/run", async (req, reply) => {
       if (calc.summary && typeof calc.summary.warns === "number") calc.summary.warns += 1;
     }
 
-    const inputs = { context: ctxRow, evse: evse.rows, feeders: feeders.rows };
+    const inputs = { context: ctxRow, evse: evseRes.rows, feeders: feedersRes.rows };
     const outputs = { ...calc };
 
-    const run = await db.query(
+    const runRes = await db.query(
       `insert into calculation_run(tenant_id, project_id, ruleset_name, ruleset_version, inputs_json, outputs_json, created_by)
        values ($1,$2,$3,$4,$5,$6,$7)
        returning id, created_at`,
-      [req.tenant.id, projectId, calc.ruleset.name, calc.ruleset.version, inputs, outputs, req.user.id]
+      [req.tenant.id, projectId, calc.ruleset.name, calc.ruleset.version, inputs, outputs, req.user?.id ?? null]
     );
 
-    for (const n of calc.nonConformities) {
+    const runId = runRes.rows[0].id;
+    for (const n of (calc.nonConformities || [])) {
       await db.query(
         `insert into non_conformity(tenant_id, run_id, severity, code, standard_ref, clause_ref, message, meta)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [
           req.tenant.id,
-          run.rows[0].id,
+          runId,
           n.severity,
           n.code,
-          n.standard_ref,
-          n.clause_ref,
+          n.standard_ref ?? null,
+          n.clause_ref ?? null,
           n.message,
           n.meta ?? {}
         ]
       );
     }
 
-    return { run_id: run.rows[0].id, created_at: run.rows[0].created_at, ...calc };
+    return { run_id: runId, created_at: runRes.rows[0].created_at, ...calc };
   });
 
   return reply.send(out);
 });
+
+
 
 app.get("/projects/:projectId/calculations/latest", async (req, reply) => {
   const projectId = req.params?.projectId;
@@ -676,6 +681,7 @@ app.get("/projects/:projectId/calculations/latest", async (req, reply) => {
 
   return reply.send(out);
 });
+
 
 
 // -----------------------------
