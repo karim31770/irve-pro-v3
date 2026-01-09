@@ -568,7 +568,7 @@ app.post("/projects/:projectId/calculations/run", async (req, reply) => {
     );
 
     const feedersRes = await db.query(
-      `select id, name, evse_id, length_m, cable_section_mm2
+      `select id, name, evse_id, length_m, cable_section_mm2, install_method, cable_type, conductors
        from feeder
        where tenant_id = $1 and project_id = $2`,
       [req.tenant.id, projectId]

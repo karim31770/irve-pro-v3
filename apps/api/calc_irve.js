@@ -2,17 +2,14 @@ const SQRT3 = Math.sqrt(3);
 
 const STANDARD_BREAKERS_A = [10, 16, 20, 25, 32, 40, 50, 63];
 const STANDARD_ICU_KA = [6, 10, 15, 25];
-
-// Résistivité cuivre approx à 20°C (ohm*mm²/m)
 const RHO_CU = 0.0175;
 
-function nextStandardBreaker(ib) {
-  for (const a of STANDARD_BREAKERS_A) if (a >= ib) return a;
+function nextStandard(amps) {
+  for (const a of STANDARD_BREAKERS_A) if (a >= amps) return a;
   return STANDARD_BREAKERS_A[STANDARD_BREAKERS_A.length - 1];
 }
 
 function recommendCableSection(ib) {
-  // MVP simplifié. Remplacer par abaques NF C 15-100 licenciés.
   if (ib <= 16) return 2.5;
   if (ib <= 25) return 4;
   if (ib <= 32) return 6;
@@ -28,11 +25,10 @@ function estimateVoltageDropPercent({ phase, lengthM, currentA, sectionMm2, nomi
   const I = Number(currentA);
   const S = Number(sectionMm2);
   const U = Number(nominalVoltageV);
-
   if (!(L > 0 && I > 0 && S > 0 && U > 0)) return null;
 
   const k = (phase === "TRI") ? SQRT3 : 2;
-  const dU = k * RHO_CU * L * I / S; // volts
+  const dU = k * RHO_CU * L * I / S;
   return (dU / U) * 100;
 }
 
@@ -47,78 +43,93 @@ function nc(severity, code, message, standardRef = null, clauseRef = null, meta 
   return { severity, code, message, standard_ref: standardRef, clause_ref: clauseRef, meta };
 }
 
+function defaultCableType(installMethod) {
+  if (installMethod === "UNDERGROUND") return "U1000 R2V (sous fourreau TPC)";
+  if (installMethod === "OUTDOOR") return "U1000 R2V (extérieur protégé)";
+  if (installMethod === "PARKING") return "U1000 R2V (parking protégé)";
+  return "U1000 R2V";
+}
+
+function defaultConductors(evsePhase) {
+  return evsePhase === "TRI" ? "5G" : "3G";
+}
+
+function rcdRatingFromBreakerIn(breakerIn) {
+  if (!breakerIn) return null;
+  if (breakerIn <= 40) return 40;
+  return 63;
+}
+
+function addBomLine(map, line) {
+  const key = `${line.category}|${line.label}|${line.spec}|${line.unit}`;
+  const existing = map.get(key);
+  if (!existing) {
+    map.set(key, { ...line, qty: Number(line.qty || 0) });
+  } else {
+    existing.qty += Number(line.qty || 0);
+    if (line.for?.length) existing.for = Array.from(new Set([...(existing.for || []), ...line.for]));
+  }
+}
+
 export function runIrveCalculation({ context, evseList, feederList }) {
   const ruleset = { name: "IRVE_MVP", version: "2026-01" };
   const nonConformities = [];
 
-  // Contexte (déjà fallbacké côté API si absent)
   const supplyPhase = context?.supply_phase || "MONO_230";
   const defaultU = supplyPhase === "TRI_400" ? 400 : 230;
   const nominalVoltageV = Number(context?.nominal_voltage_v ?? defaultU);
   const vdropLimit = Number(context?.voltage_drop_limit_percent ?? 3);
   const ikA = context?.prospective_sc_ik_a != null ? Number(context.prospective_sc_ik_a) : null;
-
   const availablePowerKw = context?.available_power_kw != null ? Number(context.available_power_kw) : null;
 
   if (!ikA) {
     nonConformities.push(
-      nc("WARN", "IK_MISSING", "Ik présumé non renseigné : vérifier pouvoir de coupure des protections (Icu).")
+      nc("WARN", "IK_MISSING", "Ik présumé non renseigné : Icu des protections à valider.")
     );
   }
 
-  // Délestage (si on connaît la puissance dispo)
   const totalEvseKw = evseList.reduce((a, e) => a + (Number(e.max_power_kw || 0) || 0), 0);
   let loadSheddingRequired = false;
+
   if (availablePowerKw != null && availablePowerKw > 0) {
     if (totalEvseKw > availablePowerKw) {
       loadSheddingRequired = true;
       nonConformities.push(
-        nc(
-          "WARN",
-          "LOAD_SHEDDING_RECOMMENDED",
+        nc("WARN", "LOAD_SHEDDING_RECOMMENDED",
           `Puissance EVSE totale ${totalEvseKw.toFixed(1)} kW > puissance disponible ${availablePowerKw.toFixed(1)} kW : délestage/gestion de charge recommandé.`,
-          null,
-          null,
-          { total_evse_kw: totalEvseKw, available_power_kw: availablePowerKw }
+          null, null, { total_evse_kw: totalEvseKw, available_power_kw: availablePowerKw }
         )
       );
     }
   } else {
-    nonConformities.push(
-      nc("INFO", "AVAILABLE_POWER_UNKNOWN", "Puissance disponible non renseignée : impossible de conclure sur le besoin de délesteur.")
-    );
+    nonConformities.push(nc("INFO", "AVAILABLE_POWER_UNKNOWN", "Puissance disponible non renseignée : délestage non déterminable."));
   }
 
-  // Mono/tri incohérent
   const hasTriEvse = evseList.some(e => e.phase === "TRI");
   if (hasTriEvse && supplyPhase === "MONO_230") {
     nonConformities.push(
-      nc(
-        "BLOCK",
-        "SUPPLY_PHASE_MISMATCH",
-        "EVSE tri détectée mais contexte en mono 230V : passer l’alimentation en TRI 400V ou réduire la puissance/architecture.",
-        null,
-        null,
-        { supply_phase: supplyPhase }
+      nc("BLOCK", "SUPPLY_PHASE_MISMATCH",
+        "EVSE tri détectée mais contexte en mono 230V : passer en TRI 400V ou modifier la puissance/architecture.",
+        null, null, { supply_phase: supplyPhase }
       )
     );
   }
 
   const evseById = new Map(evseList.map(e => [e.id, e]));
   const items = [];
+  const bomMap = new Map();
 
   for (const f of feederList) {
     const evse = f.evse_id ? evseById.get(f.evse_id) : null;
-
     const evsePhase = evse?.phase || "MONO";
     const phase = evsePhase === "TRI" ? "TRI" : "MONO";
-
     const pKw = evse?.max_power_kw != null ? Number(evse.max_power_kw) : null;
 
     let ib = null;
     if (pKw && nominalVoltageV) {
-      if (phase === "TRI") ib = (pKw * 1000) / (SQRT3 * nominalVoltageV);
-      else ib = (pKw * 1000) / nominalVoltageV;
+      ib = (phase === "TRI")
+        ? (pKw * 1000) / (SQRT3 * nominalVoltageV)
+        : (pKw * 1000) / nominalVoltageV;
     }
 
     const chosenCable = f.cable_section_mm2 != null ? Number(f.cable_section_mm2) : null;
@@ -135,40 +146,74 @@ export function runIrveCalculation({ context, evseList, feederList }) {
         })
       : null;
 
-    if (vdrop != null && vdropLimit != null && vdrop > vdropLimit) {
+    if (vdrop != null && vdrop > vdropLimit) {
       nonConformities.push(
-        nc(
-          "WARN",
-          "VDROP_HIGH",
+        nc("WARN", "VDROP_HIGH",
           `Chute de tension estimée ${vdrop.toFixed(2)}% > ${vdropLimit}% sur "${f.name}".`,
-          "NF C 15-100",
-          "chute_de_tension (réf interne)",
-          { feeder_id: f.id, vdrop, limit: vdropLimit }
+          "NF C 15-100", "chute_de_tension (réf interne)", { feeder_id: f.id, vdrop, limit: vdropLimit }
         )
       );
     }
 
-    const breakerIn = ib ? nextStandardBreaker(ib) : null;
+    const breakerIn = ib ? nextStandard(ib) : null;
     const icuKa = ikA ? recommendIcuKa(ikA) : null;
+    const breakerCurve = "C";
 
-    // IRVE: 6 mA DC
+    // Différentiel (MVP)
     let rcdType = "A";
     const rcdSens = 30;
+    const rcdIn = rcdRatingFromBreakerIn(breakerIn);
+    const rcdPoles = (phase === "TRI") ? 4 : 2;
 
     if (evse?.evse_type === "AC" && evse?.name) {
       if (!evse.has_6ma_dc_detection) {
         nonConformities.push(
-          nc(
-            "BLOCK",
-            "IRVE_DC_6MA_MISSING",
-            `EVSE "${evse.name}" sans détection DC 6 mA : vérifier le différentiel amont (composante DC).`,
-            "IEC 60364-7-722",
-            "DC leakage (réf interne)",
-            { evse_id: evse.id, feeder_id: f.id }
+          nc("BLOCK", "IRVE_DC_6MA_MISSING",
+            `EVSE "${evse.name}" sans détection DC 6 mA : vérifier le choix/architecture du différentiel amont.`,
+            "IEC 60364-7-722", "DC leakage (réf interne)", { evse_id: evse.id, feeder_id: f.id }
           )
         );
         rcdType = "B?";
       }
+    }
+
+    // Câble type / conducteurs
+    const installMethod = f.install_method || null;
+    const cableType = f.cable_type || defaultCableType(installMethod);
+    const conductors = f.conductors || defaultConductors(evsePhase);
+
+    // BOM lines
+    if (cable && f.length_m != null) {
+      addBomLine(bomMap, {
+        category: "Câble",
+        qty: Math.ceil(Number(f.length_m || 0)),
+        unit: "m",
+        label: `${cableType} ${conductors}${cable} (Cu)`,
+        spec: `Longueur ~ ${Number(f.length_m || 0)} m`,
+        for: [f.name]
+      });
+    }
+
+    if (breakerIn) {
+      addBomLine(bomMap, {
+        category: "Protection",
+        qty: 1,
+        unit: "pcs",
+        label: `Disjoncteur ${breakerCurve} ${breakerIn}A`,
+        spec: icuKa != null ? `Icu ≥ ${icuKa} kA` : "Icu à valider (Ik manquant)",
+        for: [f.name]
+      });
+    }
+
+    if (rcdType) {
+      addBomLine(bomMap, {
+        category: "Protection",
+        qty: 1,
+        unit: "pcs",
+        label: `DDR ${rcdType} ${rcdIn || ""}A ${rcdSens}mA (${rcdPoles}P)`,
+        spec: "Proposition (à valider architecture)",
+        for: [f.name]
+      });
     }
 
     items.push({
@@ -179,15 +224,37 @@ export function runIrveCalculation({ context, evseList, feederList }) {
       p_kw: pKw,
       ib_a: ib,
       length_m: Number(f.length_m ?? 0),
+
+      cable_type: cableType,
+      conductors,
       cable_section_mm2: cable,
       cable_section_source: chosenCable ? "USER" : (recommendedCable ? "AUTO" : null),
+
       vdrop_percent: vdrop,
+
       breaker_in_a: breakerIn,
+      breaker_curve: breakerCurve,
       breaker_icu_ka: icuKa,
+
       rcd_type: rcdType,
+      rcd_in_a: rcdIn,
+      rcd_poles: rcdPoles,
       rcd_sensitivity_ma: rcdSens
     });
   }
+
+  if (loadSheddingRequired) {
+    addBomLine(bomMap, {
+      category: "Gestion",
+      qty: 1,
+      unit: "pcs",
+      label: "Délesteur / gestion dynamique de charge",
+      spec: "Recommandé (total EVSE > puissance dispo)",
+      for: []
+    });
+  }
+
+  const bom = Array.from(bomMap.values()).sort((a, b) => (a.category + a.label).localeCompare(b.category + b.label));
 
   const summary = {
     feeders: feederList.length,
@@ -199,5 +266,5 @@ export function runIrveCalculation({ context, evseList, feederList }) {
     load_shedding_required: loadSheddingRequired
   };
 
-  return { ruleset, summary, items, nonConformities };
+  return { ruleset, summary, items, bom, nonConformities };
 }
