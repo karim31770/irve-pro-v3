@@ -121,11 +121,18 @@ export function runIrveCalculation({ context, evseList, feederList }) {
 
   for (const f of feederList) {
     const evse = f.evse_id ? evseById.get(f.evse_id) : null;
+    if (!evse) {
+      nonConformities.push(
+        nc("WARN", "FEEDER_NO_EVSE", `Départ "${f.name}" non lié à une EVSE : impossible de calculer Ib / protections automatiquement.`, null, null, { feeder_id: f.id })
+      );
+    }
+
     const evsePhase = evse?.phase || "MONO";
     const phase = evsePhase === "TRI" ? "TRI" : "MONO";
     const pKw = evse?.max_power_kw != null ? Number(evse.max_power_kw) : null;
 
     let ib = null;
+
     if (pKw && nominalVoltageV) {
       ib = (phase === "TRI")
         ? (pKw * 1000) / (SQRT3 * nominalVoltageV)
@@ -152,6 +159,12 @@ export function runIrveCalculation({ context, evseList, feederList }) {
           `Chute de tension estimée ${vdrop.toFixed(2)}% > ${vdropLimit}% sur "${f.name}".`,
           "NF C 15-100", "chute_de_tension (réf interne)", { feeder_id: f.id, vdrop, limit: vdropLimit }
         )
+      );
+    }
+
+    if (!ib) {
+      nonConformities.push(
+        nc("WARN", "IB_UNKNOWN", `Ib non calculable pour "${f.name}" : lier EVSE + vérifier tension/phase.`, null, null, { feeder_id: f.id })
       );
     }
 
