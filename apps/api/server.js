@@ -763,5 +763,62 @@ app.post("/projects/wizard", async (req, reply) => {
   return reply.code(201).send(out);
 });
 
+
+// -----------------------------
+// Update feeder (link EVSE / params)
+// -----------------------------
+app.put("/projects/:projectId/feeders/:feederId", async (req, reply) => {
+  const { projectId, feederId } = req.params ?? {};
+  if (!isUuid(projectId) || !isUuid(feederId)) return reply.code(400).send({ error: "invalid ids" });
+
+  const body = req.body ?? {};
+
+  const out = await withTenantContext(req, async (db) => {
+    requireRole(req, ["ADMIN", "MANAGER"]);
+
+    await requireProject(db, req.tenant.id, projectId);
+
+    // if evseId provided, ensure it belongs to the project
+    if (body.evseId) {
+      const ev = await db.query(
+        "select id from evse where tenant_id = $1 and project_id = $2 and id = $3",
+        [req.tenant.id, projectId, body.evseId]
+      );
+      if (ev.rowCount === 0) {
+        const err = new Error("evseId not found for this project");
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+
+    const r = await db.query(
+      `update feeder set
+         evse_id = coalesce($4, evse_id),
+         length_m = coalesce($5, length_m),
+         cable_section_mm2 = $6,
+         install_method = coalesce($7, install_method),
+         cable_type = coalesce($8, cable_type),
+         conductors = coalesce($9, conductors),
+         cable_section_source = case when $6 is null then cable_section_source else coalesce($10, cable_section_source) end
+       where tenant_id = $1 and project_id = $2 and id = $3
+       returning id, name, evse_id, length_m, cable_section_mm2, install_method, cable_type, conductors, cable_section_source`,
+      [
+        req.tenant.id, projectId, feederId,
+        body.evseId ?? null,
+        body.lengthM ?? null,
+        body.cableSectionMm2 ?? null,
+        body.installMethod ?? null,
+        body.cableType ?? null,
+        body.conductors ?? null,
+        body.cableSectionSource ?? null
+      ]
+    );
+    if (r.rowCount === 0) throw httpError(404, "Feeder not found");
+    return r.rows[0];
+  });
+
+  return reply.send(out);
+});
+
 const port = Number(process.env.PORT ?? 4010);
 await app.listen({ port, host: "0.0.0.0" });
