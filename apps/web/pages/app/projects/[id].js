@@ -302,6 +302,7 @@ export default function ProjectDetail() {
                     <span className="badge badge-outline">{project.status}</span>
                   </div>
                 </div>
+                <a className="btn btn-outline" href={`/app/projects/${projectId}/buy`}>Liste d’achat</a>
                 <button className="btn btn-ghost" onClick={() => loadAll().catch(e => toast.error(e.message))}>
                   <RefreshCw className="w-4 h-4" /> Rafraîchir
                 </button>
